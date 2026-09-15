@@ -11,6 +11,8 @@
 import { useState } from 'react';
 import {
   BrainCircuit,
+  Sparkles,
+  HardDrive,
   Plus,
   Trash2,
   Power,
@@ -28,6 +30,7 @@ import {
   MAX_TITLE_CHARS,
   clampLogicBlocks,
   compileMasterAlgorithm,
+  conceptsToBlocks,
   newBlockId,
 } from '../engine/masterAlgorithm';
 
@@ -37,6 +40,9 @@ interface PinterestBrainStudioProps {
   engineArmed: boolean;
   onCommit: (blocks: LogicBlock[]) => { ok: boolean; reason?: string };
   onSwitchToCode: () => void;
+  /** RULE 4 environment recognition + RULE 2 vault stats for the footer strip. */
+  envFlavor?: string;
+  vaultCount?: number;
 }
 
 const STAGE_ACCENT: Record<LogicStage, string> = {
@@ -58,9 +64,20 @@ export const PinterestBrainStudio: React.FC<PinterestBrainStudioProps> = ({
   engineArmed,
   onCommit,
   onSwitchToCode,
+  envFlavor,
+  vaultCount = 0,
 }) => {
   const [draft, setDraft] = useState<LogicBlock[]>(committed);
   const [commitNote, setCommitNote] = useState<string | null>(null);
+  const [rawNotes, setRawNotes] = useState('');
+
+  const breakDownNotes = () => {
+    const produced = conceptsToBlocks(rawNotes);
+    if (produced.length === 0) return;
+    setDraft((prev) => [...prev, ...produced].slice(0, MAX_BLOCKS));
+    setRawNotes('');
+    setCommitNote(`Interview pass: ${produced.length} concept line(s) folded into layer blocks — review, adjust, then commit.`);
+  };
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(committed);
   const compiled = compileMasterAlgorithm(draft);
@@ -134,6 +151,42 @@ export const PinterestBrainStudio: React.FC<PinterestBrainStudioProps> = ({
           </span>
         </div>
 
+        {/* ── RULE 5 · GUIDED ARCHITECT INTERVIEW — step-by-step concept intake ── */}
+        <div className="pinterest-card p-4 space-y-3 bg-gradient-to-br from-[#FCFAF7] to-[#F6EFE6]">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <Sparkles className="w-4 h-4 text-[#8B5CF6]" />
+              <h2 className="text-xs font-bold uppercase tracking-wider text-[#6D28D9]">Guided architect interview</h2>
+            </div>
+            <span className="text-[10px] font-mono text-[#A8A29E]">Yes boss — input your raw concepts or notes here</span>
+          </div>
+          <p className="text-[11px] text-[#78716C] leading-snug">
+            Write freely — one thought per line. The hub parses each line chronologically into rigorous
+            layer blocks (<span className="font-mono text-[#0EA5E9]">when/parse</span> → PARSE,
+            <span className="font-mono text-[#8B5CF6]"> must/never/map</span> → PLAN,
+            <span className="font-mono text-[#10B981]"> build/execute</span> → EXECUTE,
+            <span className="font-mono text-[#F59E0B]"> test/verify</span> → VERIFY), then walks you to the final architecture.
+          </p>
+          <textarea
+            value={rawNotes}
+            onChange={(e) => setRawNotes(e.target.value.slice(0, 8000))}
+            rows={4}
+            spellCheck={false}
+            placeholder={'e.g.\nwhen a payload arrives, parse headers first\nnever store raw prompts outside this machine\nbuild the vault as a ring buffer\ntest gateway close before merge'}
+            className="w-full text-[11px] font-mono leading-relaxed rounded-xl border border-[#E8DFD5] bg-[#FFFFFF] p-2.5 outline-none resize-y focus:border-[#D6C8BA] text-[#1C1917]"
+          />
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-mono text-[#A8A29E]">{rawNotes.split(/\r?\n/).filter((l) => l.trim().length > 2).length} concept line(s) staged</span>
+            <button
+              onClick={breakDownNotes}
+              disabled={rawNotes.trim().length === 0}
+              className="px-3.5 py-1.5 rounded-full bg-[#8B5CF6] hover:bg-[#7C3AED] disabled:bg-[#E8DFD5] disabled:text-[#A8A29E] text-[11px] font-semibold text-[#FFFFFF] shadow-2xs transition-colors"
+            >
+              Break down into layers →
+            </button>
+          </div>
+        </div>
+
         {/* Scaffolding pipeline */}
         <div className="pinterest-card p-4">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-[#A8A29E] mb-2">
@@ -157,6 +210,15 @@ export const PinterestBrainStudio: React.FC<PinterestBrainStudioProps> = ({
               );
             })}
           </div>
+        </div>
+
+        {/* ── RULE 2/4 status strip: local vault + recognized host environment ── */}
+        <div className="pinterest-card px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-[10px] font-mono text-[#57534E]">
+          <span className="flex items-center space-x-1.5">
+            <HardDrive className="w-3.5 h-3.5 text-[#0D9488]" />
+            <span>LOGIC HUB VAULT · {vaultCount} record(s) · machine-local only · zero cloud persistence (Rule 2)</span>
+          </span>
+          {envFlavor && <span className="text-[#8C827A]">Host environment recognized: <strong className="text-[#1C1917]">{envFlavor}</strong></span>}
         </div>
 
         {/* Lane grid */}

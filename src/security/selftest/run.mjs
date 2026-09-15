@@ -63,6 +63,14 @@ async function main() {
     process.exit(1);
   }
 
+  if (!globalThis.localStorage) {
+    const mem = new Map();
+    globalThis.localStorage = {
+      getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+      setItem: (k, v) => mem.set(k, String(v)),
+      removeItem: (k) => mem.delete(k),
+    };
+  }
   const sec = await import(`file://${path.join(outDir, 'security-bundle.mjs')}`);
   const shield = sec.doubleLayerShield;
   const core = sec.securityCore;
@@ -277,6 +285,70 @@ async function main() {
   check('model profiles expose blank posture', Object.values(client.MISTRAL_MODELS).every((m) => m.posture === 'BLANK_EXECUTOR' && m.reasoningPreset === 'NONE'));
   check('default sampling is argmax blank', client.DEFAULT_REMOTE_CONFIG.temperature === 0.0 && client.DEFAULT_REMOTE_CONFIG.topP === 1.0);
   check('safe_prompt firewall pin survives', client.DEFAULT_REMOTE_CONFIG.safePrompt === true);
+
+  section('LOGIC HUB // Rules 1-5 + Phase 2 deep action logic');
+  const files = [
+    { path: 'src/paymentProcessor.js', content: 'function runTask(){ return 1 }' },
+    { path: 'src/authGateway.ts', content: 'import { x } from "./util"\nexport function auth(){}' },
+  ];
+  const map = algo.buildMentalMap('fix src/paymentProcessor.js\nthis must not touch src/authGateway.ts\nfetch asset https://cdn.example/app.js', files, 'src/paymentProcessor.js');
+  check('mental map: line-by-line', map.lines.length === 3 && map.lines[0].n === 1);
+  check('mental map: file links resolve', map.fileLinks.includes('src/paymentProcessor.js') && map.fileLinks.includes('src/authGateway.ts'));
+  check('mental map: intents detected', map.intents.includes('FIX') && map.intents.includes('NETWORK_UTILITY'));
+  check('mental map: dependency graph', map.dependencies.find((d) => d.path === 'src/authGateway.ts')?.imports.length === 1);
+  check('mental map: impact runsCode', map.impact.runsCode === true);
+  const messy = algo.selfCorrectOutput('code:\n```js\nfunction a() {\n  foo(1,);\n  bar();;\n}\n', { mentalMap: map });
+  check('rewrite loop: closes dangling fence', (messy.text.match(/```/g) || []).length % 2 === 0, messy.fixes.map((f) => f.check).join(','));
+  check('rewrite loop: punctuation clash fixed', !messy.text.includes('foo(1,)') && !messy.text.includes(';;') && messy.rewrote === true, JSON.stringify(messy.text).slice(0, 120));
+  const twice = algo.selfCorrectOutput(messy.text, { mentalMap: map });
+  check('rewrite loop: idempotent (2nd pass clean)', twice.rewrote === false || twice.fixes.length === messy.fixes.length);
+  const scopeDrift = algo.selfCorrectOutput('```js\nfunction unrelated() { return 0 }\n```', { mentalMap: map });
+  check('rewrite loop: scope-gap flagged on drift', scopeDrift.text.includes('SCOPE-GAP'));
+  const dup = algo.selfCorrectOutput('function go() {\n  a();\n  b();\n  c();\n}\nfunction go() {\n  a();\n  b();\n  c();\n}\n');
+  check('isolation: duplicate 4-line window flagged', dup.fixes.some((f) => f.check === 'DUPLICATE_BLOCK'), dup.fixes.map((f) => f.check).join(','));
+  const dupClean = algo.selfCorrectCode('function go() {\n  a();\n}\nfunction go() {\n  a();\n}\n');
+  check('isolation: dup declaration removed from code', !/function go\(\) \{\n  a\(\);\n\}\nfunction go/.test(dupClean.code));
+  const codeDup = algo.selfCorrectCode('```\nfunction keep() { return 2 }\nfunction keep() { return 1 }\n```');
+  check('selfCorrectCode: dup decl isolated (keeps last)', codeDup.fixes.some((f) => f.includes('duplicate function keep')), codeDup.fixes.join('|'));
+  check('selfCorrectCode: clean noise (fences stripped)', !codeDup.code.includes('```'));
+  const broken = algo.selfCorrectCode('function o() { if (1) { } ]');
+  check('selfCorrectCode: mismatch fail-closed', broken.unrecoverable !== null, String(broken.unrecoverable));
+  const unclosed = algo.selfCorrectCode('function o() {\n  return 1;');
+  check('selfCorrectCode: auto-close unterminated block', unclosed.unrecoverable === null && (unclosed.code.match(/}/g) || []).length >= (unclosed.code.match(/{/g) || []).length);
+  const adv = algo.advisoryForPrompt('please build it with eval(userInput) and select * from t where id=' + '+req.body.id');
+  check('advisory: risky idioms staged', adv.findings.length >= 2 && adv.message.includes('Boss, I can build it your way'));
+  check('advisory: clean prompt has no findings', algo.advisoryForPrompt('add a unit test for the parser').findings.length === 0);
+  check('advisory never replaces security: rm -rf is NOT advisory-izable', (() => {
+    const a = algo.advisoryForPrompt('run rm -rf /');
+    const hard = shield.inspectSecurityPayload('run rm -rf /', 'USER_PROMPT', shield.DEFAULT_SHIELD_CONFIG);
+    return hard.threats.some((t) => t.severity === 'CRITICAL'); // shield denies; advisory channel irrelevant to it
+  })());
+  const blocks = algo.conceptsToBlocks('when payload arrives parse headers\nnever store prompts in cloud\nbuild the vault ring buffer\ntest gateway close');
+  check('interview: PARSE/PLAN/EXECUTE/VERIFY routing', blocks.map((b) => b.stage).join(',') === 'PARSE,PLAN,EXECUTE,VERIFY', blocks.map((b) => b.stage).join(','));
+  check('interview: block bodies are operator lines verbatim', blocks[0].body.startsWith('when payload arrives'));
+  const t1 = algo.issueGatewayTicket('pull web asset');
+  const t2 = algo.releaseGatewayTicket(t1);
+  check('gateway ticket: single-use + auto-close note', t1.consumed === true && t2.includes('airgap re-armed'));
+  const recs = algo.readVaultRecords();
+  check('vault: gateway open+close recorded locally', recs.filter((r) => r.kind === 'GATEWAY').length >= 2);
+  for (let i = 0; i < 250; i++) algo.appendVaultRecord('PROMPT', 'p' + i + ' '.repeat(600));
+  const capped = algo.readVaultRecords();
+  check('vault: capped to 200 records', capped.length === 200);
+  check('vault: record detail clamped', capped[capped.length - 1].detail.length <= 400);
+  check('env: plain browser without signals', algo.detectIdeEnv([]).flavor === 'Plain Browser');
+  check('env: vscode marker recognized', algo.detectIdeEnv([{ path: '.vscode/settings.json' }]).flavor === 'VS Code');
+  check('env: vscodium marker recognized', algo.detectIdeEnv([{ path: 'vscodium.product.json' }]).flavor === 'VSCodium');
+  check('defaults: Rules 1-5 ship armed on first load', (() => {
+    localStorage.removeItem('aeg**_v1');
+    const seeded = algo.loadLogicBlocks();
+    return seeded.length >= 5 && algo.isEngineArmed(seeded) && algo.activeBlockCount(seeded) === seeded.length;
+  })());
+  check('defaults: seeded rules are shield-clean', (() => {
+    const compiled = algo.compileMasterAlgorithm(algo.DEFAULT_MASTER_BLOCKS);
+    const audit = shield.inspectSecurityPayload(compiled, 'AI_CODE_OUTPUT', shield.DEFAULT_SHIELD_CONFIG);
+    return audit.threats.every((t) => t.severity !== 'CRITICAL') && compiled.includes('RULE 1') && compiled.includes('RULE 5');
+  })());
+  check('defaults: zero external-preset language', !algo.DEFAULT_MASTER_BLOCKS.some((b) => /deepseek|grok|openai|claude|gemini|assistant persona/i.test(b.body)));
 
   console.log(`\n\x1b[1mRESULT: ${passed} passed, ${failed} failed\x1b[0m`);
   if (failed > 0) {

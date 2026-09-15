@@ -56,8 +56,19 @@ import {
 import { generateOfflineMistralResponse } from './engine/offlineEngine';
 import {
   AppMode,
+  GatewayTicket,
   LogicBlock,
   STANDBY_NOTICE,
+  advisoryForPrompt,
+  appendVaultRecord,
+  buildMentalMap,
+  detectIdeEnv,
+  hubVoice,
+  issueGatewayTicket,
+  readVaultRecords,
+  releaseGatewayTicket,
+  selfCorrectCode,
+  selfCorrectOutput,
   activeBlockCount,
   compileMasterAlgorithm,
   isEngineArmed,
@@ -93,6 +104,17 @@ export function App() {
   const engineArmed = isEngineArmed(logicBlocks);
   const armedBlockCount = activeBlockCount(logicBlocks);
   const compiledAlgorithm = useMemo(() => compileMasterAlgorithm(logicBlocks), [logicBlocks]);
+
+  // RULE 4 · universal environment recognition (VS Code / VSCodium / VS
+  // Community / VS Dev family) from workspace signals — recognition only,
+  // never a control surface. RULE 2 · vault is machine-local storage.
+  const ideEnv = useMemo(() => detectIdeEnv(files.map((f) => ({ path: f.path }))), [files]);
+  useEffect(() => {
+    appendVaultRecord(
+      'ENV',
+      `IDE recognition: ${ideEnv.flavor}${ideEnv.signals.length ? ' · ' + ideEnv.signals.join(', ') : ' · no host signals'} · vault = this device only`
+    );
+  }, []);
 
   useEffect(() => {
     saveAppMode(appMode);
@@ -135,7 +157,9 @@ export function App() {
     '$ │ LAYER 2 SHELL GPT     SHELLWEAVER-02 · command tokenization · strict-argv allowlist',
     '$ │ LAYER 3 TERMINAL GPT  AUTORUN-03 · single-use hash-bound permits · scope-locked sandbox',
     '$ └─ Every chat, editor, patch and terminal action is chained through all three.',
-    '$ [KERNEL] ENGINE POSTURE: BLANK — model personas & reasoning presets stripped; the master algorithm (BRAIN MODE) is the sole thinking authority.',
+    '$ [KERNEL] ENGINE POSTURE: MASTER ALGORITHM ENGAGED — operator Rules 1–5 shipped armed; external model presets remain stripped.',
+    '$ [LOGIC HUB] Line-by-line mental mapping + mandatory self-eval/rewrite loop active on every Code Mode pass.',
+    '$ [LOGIC HUB] Zero-server privacy vault online (machine-local) · network CLOSED by default (one-shot gateway tickets only).',
     '$ Studio front-end running in clean Pinterest design system.',
   ]);
 
@@ -175,6 +199,10 @@ export function App() {
 
   // Messages list (starts empty so user sees the hero Pinterest welcome screen)
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [vaultCount, setVaultCount] = useState(0);
+  useEffect(() => {
+    setVaultCount(readVaultRecords().length);
+  }, [terminalLogs.length, messages.length]);
   const [isStreaming, setIsStreaming] = useState(false);
 
   const activeFile = files.find((f) => f.id === activeFileId) || files[0];
@@ -484,6 +512,7 @@ export function App() {
 
   const handleRunCurrentScript = () => {
     const { result: execResult } = gatedSandboxRun(activeFile.path, activeFile.content);
+    appendVaultRecord('RUN', `node ${activeFile.path} → exit ${execResult.exitCode} (sandbox, local record only)`);
     setLastExecutionResult(execResult);
 
     setFiles((prev) =>
@@ -543,6 +572,7 @@ export function App() {
         return;
       }
       const { result } = gatedSandboxRun(matched.path, matched.content);
+      appendVaultRecord('RUN', `${argv.join(' ')} → exit ${result.exitCode} (terminal drawer)`);
       setLastExecutionResult(result);
       setFiles((prev) =>
         prev.map((f) =>
@@ -685,6 +715,9 @@ export function App() {
 
         setTimeout(async () => {
           let healedContent = bites.map((b) => b.healedSnippet).join('\n');
+          // Rule 1 applies to the hub's own mechanical output too: the composed
+          // patch is self-evaluated before it can be staged into the editor.
+          healedContent = selfCorrectOutput(healedContent, { mentalMap: undefined }).text;
 
           // If online with API key, perform live remote synthesis. The reply is
           // UNTRUSTED: LAYER 1 must clear it, otherwise the deterministic local
@@ -824,8 +857,42 @@ export function App() {
     return { ok: true };
   };
 
-  // User chat message handling
-  const handleSendMessage = (userText: string) => {
+  // ── RULE 3 handlers: the operator decides; advisory is NEVER a security gate ──
+  const resolveAdvisoryCard = (msgId: string, tail: string) =>
+    setMessages((prev) =>
+      prev.map((m) => (m.id === msgId && m.advisory ? { ...m, advisory: undefined, text: `${m.text}\n\n_${tail}_` } : m))
+    );
+
+  const handleAdvisoryDecision = (msgId: string, choice: 'adopt-alternative' | 'proceed-anyway' | 'abort') => {
+    const msg = messages.find((m) => m.id === msgId);
+    if (!msg?.advisory) return;
+    const { prompt, alternative } = msg.advisory;
+    if (choice === 'abort') {
+      resolveAdvisoryCard(msgId, 'request dropped by operator');
+      appendVaultRecord('ADVISORY', 'operator dropped the request');
+      logSovereign(['[LOGIC HUB · RULE 3] Request dropped — nothing was executed.']);
+      return;
+    }
+    if (choice === 'proceed-anyway') {
+      resolveAdvisoryCard(msgId, 'operator insisted — original prompt executed directly');
+      appendVaultRecord('ADVISORY_OVERRIDE', 'operator insisted on original prompt — executed directly (security layers still enforced)');
+      logSovereign(['[LOGIC HUB · RULE 3] Operator insisted — executing the original prompt as-is. (CRITICAL security denials remain non-negotiable.)']);
+      handleSendMessage(prompt, { advisoryOverride: true });
+      return;
+    }
+    resolveAdvisoryCard(msgId, 'alternative adopted');
+    appendVaultRecord('ADVISORY', 'operator adopted the hub alternative');
+    handleSendMessage(`${prompt}\n\n[HUB] Operator adopted the alternative: ${alternative}`, { advisoryOverride: true });
+  };
+
+  // RULE 4 handler: one-shot ephemeral gateway — issue, use once, hard-close.
+  const handleGatewayGrant = (msgId: string, prompt: string) => {
+    resolveAdvisoryCard(msgId, 'ephemeral gateway approved for a single request (RULE 4)');
+    handleSendMessage(prompt, { advisoryOverride: true, gatewayApproved: true });
+  };
+
+  // User chat message handling — opts carry the operator's advisory/gateway decisions.
+  const handleSendMessage = (userText: string, opts: { advisoryOverride?: boolean; gatewayApproved?: boolean } = {}) => {
     const userMsg: ChatMessage = {
       id: `msg-user-${Date.now()}`,
       sender: 'USER',
@@ -903,11 +970,85 @@ export function App() {
       return;
     }
 
+    // ── RULE 1 PRE-PASS · line-by-line mental mapping (Code Mode) ──
+    // Never skipped, never model-delegated: the hub maps the prompt against
+    // the workspace — file links, dependency graph, execution impact — before
+    // anything drafts code. Session content stays device-local (RULE 2).
+    const hubMap = buildMentalMap(userText, files.map((f) => ({ path: f.path, content: f.content })), activeFile.path);
+    appendVaultRecord('PROMPT', userText.slice(0, 300));
+    logSovereign([
+      `[LOGIC HUB · RULE 1] Mental map — ${hubMap.summary}`,
+      ...hubMap.impact.notes.map((n) => `[LOGIC HUB · RULE 1] Impact — ${n}`),
+    ]);
+
+    if (!opts.advisoryOverride && !opts.gatewayApproved) {
+      // ── RULE 3 · proactive safeguard triage (advisory ONLY) ──
+      // CRITICAL security denials already happened upstream at the shield and
+      // can never be overridden. What follows is future-bug guidance: alert +
+      // alternative, and the operator's insist path executes directly.
+      const adv = advisoryForPrompt(userText);
+      if (adv.findings.length > 0) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `msg-advisory-${Date.now()}`,
+            sender: 'SOVEREIGN_AI',
+            timestamp: new Date().toLocaleTimeString(),
+            text: adv.message,
+            advisory: { prompt: userText, alternative: adv.findings[0].alternative },
+          },
+        ]);
+        appendVaultRecord('ADVISORY', `staged ${adv.findings.map((f) => f.id).join(', ')}`);
+        logSovereign([`[LOGIC HUB · RULE 3] Advisory staged before execution · ${adv.findings.map((f) => f.id).join(', ')}`]);
+        return;
+      }
+
+      // ── RULE 4 · network utility while airgapped → request one-shot ticket ──
+      const wantsNet = hubMap.intents.some((i) => i === 'NETWORK_UTILITY' || i === 'GIT' || i === 'DEPLOY');
+      const airgapped = !(remoteConfig.mode === 'online' && remoteConfig.apiKey.trim());
+      if (wantsNet && airgapped && remoteConfig.apiKey.trim()) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `msg-gateway-${Date.now()}`,
+            sender: 'SOVEREIGN_AI',
+            timestamp: new Date().toLocaleTimeString(),
+            text: [
+              'Boss, this needs the network — and the gateway is CLOSED by default (Rule 4).',
+              'I can open it for exactly ONE request against the pinned sanctioned endpoint, then it closes and retires itself.',
+              'Prefer to stay airgapped? I will run this fully through the local engine instead — no approval needed.',
+            ].join('\n\n'),
+            advisory: { prompt: userText, alternative: 'Proceed with the offline engine (no network).', gateway: true },
+          },
+        ]);
+        appendVaultRecord('GATEWAY', 'approval requested for network-utility prompt');
+        logSovereign(['[LOGIC HUB · RULE 4] Gateway approval requested — nothing opened yet.']);
+        return;
+      }
+      if (wantsNet && airgapped && !remoteConfig.apiKey.trim()) {
+        logSovereign([
+          '[LOGIC HUB · RULE 4] Network utility requested but no sanctioned gateway is configured — executed on offline capability only. Nothing left the device.',
+        ]);
+      }
+    }
+
     setIsStreaming(true);
 
     const runAgentPipeline = async () => {
       const modelTitle = MISTRAL_MODELS[activeModel].displayName;
       const isStructuredAgentCommand = isStructuredLayerCommand;
+
+      // RULE 4 · the borrowed-open gateway: a ticket, one request, auto-close.
+      // It never widens WHERE we may connect — the egress pin still decides.
+      const gatewayTicket: GatewayTicket | null =
+        opts.gatewayApproved && remoteConfig.apiKey.trim()
+          ? issueGatewayTicket(`utility run: ${userText.slice(0, 80)}`)
+          : null;
+      const callConfig = gatewayTicket
+        ? { ...remoteConfig, mode: 'online' as const }
+        : remoteConfig;
+      const onlineChannelOpen =
+        !isStructuredAgentCommand && callConfig.mode === 'online' && callConfig.apiKey.trim().length > 0;
 
       let response = generateAgentResponse(activeAgent, userText, {
         activeFilePath: activeFile.path,
@@ -990,11 +1131,32 @@ export function App() {
         return raw;
       };
 
-      // Online Remote API call if configured
-      if (!isStructuredAgentCommand && remoteConfig.mode === 'online' && remoteConfig.apiKey.trim()) {
+      // ── RULES 1+4 · MANDATORY SELF-EVALUATION & REWRITE LOOP ──
+      // The draft is read back token pass by token pass by the hub's
+      // introspection loop: fence residue, brace/paren imbalance, duplicated
+      // logic windows, punctuation clashes and drift from the mental-map
+      // targets are intercepted and REWRITTEN behind the scenes. Only the
+      // corrected text then faces L1's output gate — the operator sees the
+      // finished block plus the voice-line summary, never the raw draft.
+      const hubProcess = (raw: string): string => {
+        const evaluated = selfCorrectOutput(raw, { mentalMap: hubMap });
+        if (evaluated.rewrote) {
+          logSovereign([
+            `[LOGIC HUB · RULE 1] Self-eval rewrote outbound draft pre-presentation (${evaluated.fixes
+              .map((f) => f.check)
+              .join(', ')})`,
+          ]);
+          appendVaultRecord('REWRITE', `pass=${evaluated.passes} fixes=${evaluated.fixes.map((f) => f.check).join(',')}`);
+        }
+        const gated = gateOutput(evaluated.text);
+        return `${hubVoice(hubMap, ideEnv, evaluated)}\n\n${gated}`;
+      };
+
+      // Online Remote API call if configured (or granted a one-shot gateway ticket)
+      if (onlineChannelOpen) {
         const remoteResult = await generateRemoteMistralChat({
           model: activeModel,
-          config: remoteConfig,
+          config: callConfig,
           messages: [
             {
               role: 'system',
@@ -1012,7 +1174,7 @@ export function App() {
         });
 
         if (remoteResult.ok) {
-          aiResponseText = gateOutput(remoteResult.text);
+          aiResponseText = hubProcess(remoteResult.text);
           tokenMetrics = {
             prompt: remoteResult.usage?.promptTokens ?? 0,
             completion: remoteResult.usage?.completionTokens ?? 0,
@@ -1029,7 +1191,7 @@ export function App() {
             fileContent: activeFile.content,
             logicBlocks,
           });
-          aiResponseText = gateOutput(offlineRes.text);
+          aiResponseText = hubProcess(offlineRes.text);
           tokenMetrics = {
             prompt: offlineRes.tokens.prompt,
             completion: offlineRes.tokens.completion,
@@ -1047,7 +1209,7 @@ export function App() {
           fileContent: activeFile.content,
           logicBlocks,
         });
-        aiResponseText = gateOutput(offlineRes.text);
+        aiResponseText = hubProcess(offlineRes.text);
         tokenMetrics = {
           prompt: offlineRes.tokens.prompt,
           completion: offlineRes.tokens.completion,
@@ -1059,9 +1221,22 @@ export function App() {
         // LAYER 1 patch gate and LAYER 2 filename policy before it may enter the
         // workspace — a poisoned generation can never plant a file.
         if (offlineRes.generatedFile) {
-          const gen = offlineRes.generatedFile;
+          const rawGen = offlineRes.generatedFile;
+          // RULE 1/4: the hub rewrites its own generated file behind the scenes
+          // (dupes, syntax clashes, unbalanced blocks) before it can reach the
+          // workspace — and refuses the write outright if structure is unfixable.
+          const corrected = selfCorrectCode(rawGen.content);
+          const gen = { ...rawGen, content: corrected.code };
+          if (corrected.fixes.length > 0) {
+            appendVaultRecord('REWRITE', `${gen.path}: ${corrected.fixes.join(' · ')}`);
+            logSovereign([`[LOGIC HUB · RULE 1] Generated ${gen.path} self-rewritten pre-presentation: ${corrected.fixes.join(' · ')}`]);
+          }
           const nameCheck = validateWorkspaceFilename(gen.path);
-          if (!nameCheck.ok) {
+          if (corrected.unrecoverable) {
+            logSovereign([
+              `[LOGIC HUB · RULE 1] Refused to write ${gen.path}: ${corrected.unrecoverable}. The hub does not ship code it cannot verify.`,
+            ]);
+          } else if (!nameCheck.ok) {
             logSovereign([
               `[SHELL GPT · LAYER 2] REFUSED generated file "${gen.path}": ${nameCheck.reason}`,
             ]);
@@ -1091,6 +1266,10 @@ export function App() {
           ]);
           }
         }
+      }
+
+      if (gatewayTicket) {
+        logSovereign([`[LOGIC HUB · RULE 4] ${releaseGatewayTicket(gatewayTicket)}`]);
       }
 
       const aiMsg: ChatMessage = {
@@ -1212,6 +1391,8 @@ export function App() {
                 engineArmed={engineArmed}
                 onCommit={handleCommitAlgorithm}
                 onSwitchToCode={() => setAppMode('CODE')}
+                envFlavor={ideEnv.flavor}
+                vaultCount={vaultCount}
               />
             ) : (
             <>
@@ -1242,6 +1423,8 @@ export function App() {
                   onApplyAllBites={handleApplyAllBites}
                   isStreaming={isStreaming}
                   activeAgent={activeAgent}
+                  onAdvisoryAction={handleAdvisoryDecision}
+                  onGatewayGrant={handleGatewayGrant}
                 />
               )
             )}
@@ -1439,6 +1622,7 @@ export function App() {
                             setActiveFileId(file.id);
                             // Run THIS file (not the previously active one) through the gate.
                             const { result } = gatedSandboxRun(file.path, file.content);
+                            appendVaultRecord('RUN', `node ${file.path} → exit ${result.exitCode} (tasks runner)`);
                             setLastExecutionResult(result);
                             setFiles((prev) =>
                               prev.map((f) =>

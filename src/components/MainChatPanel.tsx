@@ -33,6 +33,12 @@ export interface ChatMessage {
   agentResponse?: AgentResponse;
   securityBlocked?: boolean;
   blockedReason?: string;
+  /** RULE 3 proactive-safeguard channel (advisory only — never a security verdict). */
+  advisory?: {
+    prompt: string;
+    alternative: string;
+    gateway?: boolean;
+  };
   targetFileId?: string;
   targetFilePath?: string;
   tokenMetrics?: {

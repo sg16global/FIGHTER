@@ -104,6 +104,10 @@ interface PinterestChatFeedProps {
   onApplyAllBites: (bites: CodeBite[]) => void;
   isStreaming: boolean;
   activeAgent: AgentId;
+  /** RULE 3 advisory responses: operator decides, engine obeys. */
+  onAdvisoryAction?: (msgId: string, choice: 'adopt-alternative' | 'proceed-anyway' | 'abort') => void;
+  /** RULE 4 ephemeral gateway approval (single one-shot request). */
+  onGatewayGrant?: (msgId: string, prompt: string) => void;
 }
 
 export const PinterestChatFeed: React.FC<PinterestChatFeedProps> = ({
@@ -115,6 +119,8 @@ export const PinterestChatFeed: React.FC<PinterestChatFeedProps> = ({
   onApplyAllBites,
   isStreaming,
   activeAgent,
+  onAdvisoryAction,
+  onGatewayGrant,
 }) => {
   const [inputText, setInputText] = useState('');
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
@@ -218,6 +224,66 @@ export const PinterestChatFeed: React.FC<PinterestChatFeedProps> = ({
                 )}
 
                 <div className="whitespace-pre-wrap font-sans leading-relaxed">{msg.text}</div>
+
+                {/* ── RULE 3 · PROACTIVE SAFEGUARD — advisory card ──
+                    Security denials NEVER render here (they are non-negotiable
+                    and stay in the shield banner above). This is the future-bug
+                    channel: adopt the alternative, or insist and the engine runs
+                    your original prompt directly. */}
+                {!isUser && msg.advisory && (
+                  <div className="mt-3 rounded-2xl border border-[#F9E79F] bg-[#FFFDF5] p-3 space-y-2.5">
+                    <div className="flex items-center space-x-1.5 text-[10px] font-bold uppercase tracking-wider text-[#7D6608]">
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Logic Hub · Proactive Safeguard</span>
+                    </div>
+                    <div className="text-[11px] text-[#57534E] leading-snug">
+                      <span className="font-semibold text-[#1C1917]">Alternative on offer:</span>{' '}
+                      {msg.advisory.alternative}
+                    </div>
+                    {msg.advisory.gateway && (
+                      <div className="text-[10px] font-mono text-[#0E6251] bg-[#E8F8F5] border border-[#A3E4D7] rounded-xl px-2.5 py-1.5">
+                        RULE 4 · gateway is CLOSED by default. Approval issues a one-shot ticket: the
+                        request runs against the pinned Mistral egress list only, then the gateway
+                        closes itself and the ticket is retired.
+                      </div>
+                    )}
+                    <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                      {msg.advisory.gateway ? (
+                        <button
+                          type="button"
+                          onClick={() => onGatewayGrant?.(msg.id, msg.advisory!.prompt)}
+                          className="px-3 py-1.5 rounded-full bg-[#0D9488] hover:bg-[#0F766E] text-[11px] font-semibold text-[#FFFFFF] shadow-2xs"
+                        >
+                          Open gateway for this one request
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => onAdvisoryAction?.(msg.id, 'adopt-alternative')}
+                          className="px-3 py-1.5 rounded-full bg-[#0D9488] hover:bg-[#0F766E] text-[11px] font-semibold text-[#FFFFFF] shadow-2xs"
+                        >
+                          Looks good — use this
+                        </button>
+                      )}
+                      {!msg.advisory.gateway && (
+                        <button
+                          type="button"
+                          onClick={() => onAdvisoryAction?.(msg.id, 'proceed-anyway')}
+                          className="px-3 py-1.5 rounded-full border border-[#E8DFD5] bg-[#FFFFFF] hover:bg-[#FAF6F0] text-[11px] font-semibold text-[#1C1917]"
+                        >
+                          Proceed my way
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => onAdvisoryAction?.(msg.id, 'abort')}
+                        className="px-3 py-1.5 rounded-full text-[11px] font-medium text-[#8C827A] hover:text-[#1C1917]"
+                      >
+                        Never mind
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Backend security layer verdict payload, if this message carries one */}
                 {!isUser && <LayerVerdictStrip msg={msg} />}
