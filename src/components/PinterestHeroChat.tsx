@@ -12,6 +12,7 @@ import {
   Sparkles,
   Check,
   Shield,
+  BrainCircuit,
 } from 'lucide-react';
 import { MistralModelId, MISTRAL_MODELS } from '../engine/mistralClient';
 import { AgentId, AGENTS } from '../agents/agents';
@@ -25,6 +26,9 @@ interface PinterestHeroChatProps {
   onOpenSettings: () => void;
   activeAgent: AgentId;
   onSelectAgent: (agentId: AgentId) => void;
+  /** Blank engine: until the master algorithm is armed, synthesis paths stand by. */
+  engineArmed: boolean;
+  onOpenBrainMode: () => void;
 }
 
 export const PinterestHeroChat: React.FC<PinterestHeroChatProps> = ({
@@ -36,6 +40,8 @@ export const PinterestHeroChat: React.FC<PinterestHeroChatProps> = ({
   onOpenSettings,
   activeAgent,
   onSelectAgent,
+  engineArmed,
+  onOpenBrainMode,
 }) => {
   const [inputText, setInputText] = useState('');
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
@@ -279,20 +285,51 @@ export const PinterestHeroChat: React.FC<PinterestHeroChatProps> = ({
           </div>
         </div>
 
-        {/* QUICK START 2x2 Grid matching Pinterest design */}
+        {/* QUICK START — gated on the master algorithm, except Brain Mode. */}
         <div className="w-full space-y-3 pt-2">
           <div className="text-left text-[11px] font-semibold uppercase tracking-wider text-[#A8A29E]">
-            QUICK START
+            {engineArmed ? 'QUICK START' : 'ENGINE STATE'}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full">
+          {!engineArmed && (
+            <div className="pinterest-card p-4 flex items-start space-x-3.5 border-[#F9E79F]">
+              <div className="w-8 h-8 rounded-xl bg-[#D97706]/15 text-[#B45309] flex items-center justify-center shrink-0 mt-0.5">
+                <BrainCircuit className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-xs font-semibold text-[#1C1917]">Backend intelligence is BLANK</h2>
+                <p className="text-[11px] text-[#78716C] leading-snug mt-1">
+                  Model personas and reasoning presets are stripped. Define how the engine thinks —
+                  then everything else (sandbox, workspace, chat) runs your algorithm.
+                </p>
+                <div className="flex items-center gap-2 mt-2">
+                  <button
+                    onClick={onOpenBrainMode}
+                    className="px-3 py-1.5 rounded-full bg-[#1C1917] text-[#FFFFFF] text-[11px] font-semibold hover:bg-[#2E2A27]"
+                  >
+                    Open Brain Mode
+                  </button>
+                  <button
+                    onClick={() => onSendMessage('status')}
+                    className="px-3 py-1.5 rounded-full border border-[#E8DFD5] text-[11px] font-semibold text-[#57534E] hover:bg-[#FAF6F0]"
+                  >
+                    Ask a security layer
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className={`grid grid-cols-1 md:grid-cols-2 gap-3 w-full ${engineArmed ? '' : 'opacity-45'}`}>
             {QUICK_START_CARDS.map((card) => {
               const Icon = card.icon;
               return (
                 <button
                   key={card.id}
-                  onClick={() => onSendMessage(card.prompt)}
-                  className="pinterest-card p-4 text-left flex items-start space-x-3.5 group cursor-pointer hover:border-[#D6C8BA] transition-all"
+                  onClick={() => engineArmed && onSendMessage(card.prompt)}
+                  disabled={!engineArmed}
+                  title={engineArmed ? undefined : 'Arm the master algorithm in Brain Mode first'}
+                  className="pinterest-card p-4 text-left flex items-start space-x-3.5 group cursor-pointer hover:border-[#D6C8BA] transition-all disabled:cursor-not-allowed"
                 >
                   <div
                     className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0 mt-0.5"
@@ -316,7 +353,7 @@ export const PinterestHeroChat: React.FC<PinterestHeroChatProps> = ({
             })}
           </div>
 
-          {/* Autonomous Option 2 Auto-Heal Quick Card */}
+          {/* AST Bite repair pass — deterministic sandbox tooling, available blank or armed */}
           <div className="pt-1">
             <button
               onClick={onTriggerAutoHeal}
@@ -329,16 +366,16 @@ export const PinterestHeroChat: React.FC<PinterestHeroChatProps> = ({
                 </div>
                 <div>
                   <div className="text-xs font-semibold text-[#1C1917] group-hover:text-[#E07A5F] transition-colors">
-                    {isHealingLoopRunning ? 'Auto-Healer Running...' : 'Option 2: Autonomous AST Auto-Heal Loop'}
+                    {isHealingLoopRunning ? 'Heal Pass Running...' : 'AST Bite Heal Pass (mechanical)'}
                   </div>
                   <div className="text-[11px] text-[#8C827A]">
-                    Slices paymentProcessor.js into AST Bites and repairs null pointers with Codestral.
+                    Deterministic guard insertion on paymentProcessor.js — no model synthesis unless the algorithm is armed.
                   </div>
                 </div>
               </div>
 
               <div className="px-3 py-1 rounded-full bg-[#FFFFFF] border border-[#E8DFD5] text-xs font-semibold text-[#E07A5F]">
-                {isHealingLoopRunning ? 'Healing...' : 'Run Auto-Heal'}
+                {isHealingLoopRunning ? 'Working...' : 'Run Heal Pass'}
               </div>
             </button>
           </div>

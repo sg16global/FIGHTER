@@ -6,12 +6,19 @@ import {
   Layers,
   Settings,
   Cpu,
+  Code2,
+  BrainCircuit,
 } from 'lucide-react';
 import { RemoteApiStatus, MistralModelId, MISTRAL_MODELS } from '../engine/mistralClient';
+import type { AppMode } from '../engine/masterAlgorithm';
 
 interface PinterestHeaderProps {
-  currentView: 'chats' | 'colab' | 'code' | 'agents' | 'tasks';
-  onSelectView: (view: 'chats' | 'colab' | 'code' | 'agents' | 'tasks') => void;
+  /** Top-level operational routing: exactly two modules. */
+  appMode: AppMode;
+  onSelectMode: (mode: AppMode) => void;
+  /** Master-algorithm posture of the blank engine. */
+  engineArmed: boolean;
+  armedBlockCount: number;
   remoteStatus: RemoteApiStatus;
   activeModel: MistralModelId;
   onOpenSettings: () => void;
@@ -24,8 +31,10 @@ interface PinterestHeaderProps {
 }
 
 export const PinterestHeader: React.FC<PinterestHeaderProps> = ({
-  currentView,
-  onSelectView,
+  appMode,
+  onSelectMode,
+  engineArmed,
+  armedBlockCount,
   remoteStatus,
   activeModel,
   onOpenSettings,
@@ -60,41 +69,53 @@ export const PinterestHeader: React.FC<PinterestHeaderProps> = ({
         />
       </div>
 
-      {/* Center: Top Floating Mode Pills ("Chats", "Colab", "Code") matching Pinterest UI */}
+            {/* Center: OPERATIONAL MODULE ROUTER — exactly two modes.
+          Replaces the former Chats/Colab/Code chat-flow pills; those sub-views
+          now live inside CODE MODE via the left sidebar. */}
       <div className="flex items-center p-1 rounded-full bg-[#EFE8DE] border border-[#E4DBD0] shadow-2xs">
         <button
-          onClick={() => onSelectView('chats')}
-          className={`px-4 py-1 rounded-full text-xs font-semibold transition-all ${
-            currentView === 'chats'
+          onClick={() => onSelectMode('CODE')}
+          title="Code Mode — autonomous-free code generation, sandbox execution, workspace tooling"
+          className={`flex items-center space-x-1.5 px-4 py-1 rounded-full text-xs font-semibold transition-all ${
+            appMode === 'CODE'
               ? 'bg-[#FFFFFF] text-[#1C1917] shadow-xs'
               : 'text-[#78716C] hover:text-[#1C1917]'
           }`}
         >
-          Chats
+          <Code2 className="w-3.5 h-3.5" />
+          <span>Code Mode</span>
         </button>
 
         <button
-          onClick={() => onSelectView('colab')}
-          className={`px-4 py-1 rounded-full text-xs font-semibold transition-all ${
-            currentView === 'colab'
+          onClick={() => onSelectMode('BRAIN')}
+          title="Brain Mode — layer-by-layer master algorithm construction & architectural scaffolding"
+          className={`flex items-center space-x-1.5 px-4 py-1 rounded-full text-xs font-semibold transition-all ${
+            appMode === 'BRAIN'
               ? 'bg-[#FFFFFF] text-[#1C1917] shadow-xs'
               : 'text-[#78716C] hover:text-[#1C1917]'
           }`}
         >
-          Colab
-        </button>
-
-        <button
-          onClick={() => onSelectView('code')}
-          className={`px-4 py-1 rounded-full text-xs font-semibold transition-all ${
-            currentView === 'code'
-              ? 'bg-[#FFFFFF] text-[#1C1917] shadow-xs'
-              : 'text-[#78716C] hover:text-[#1C1917]'
-          }`}
-        >
-          Code
+          <BrainCircuit className="w-3.5 h-3.5" />
+          <span>Brain Mode</span>
         </button>
       </div>
+
+      {/* Engine posture chip: the blank engine reports its real state */}
+      <span
+        className={`hidden lg:flex items-center space-x-1.5 px-2.5 py-1 rounded-full border text-[10px] font-mono font-semibold shadow-2xs ${
+          engineArmed
+            ? 'bg-[#E8F8F5] border-[#A3E4D7] text-[#0E6251]'
+            : 'bg-[#FEF9E7] border-[#F9E79F] text-[#7D6608]'
+        }`}
+        title={
+          engineArmed
+            ? `${armedBlockCount} armed logic block(s) dictate all model behavior`
+            : 'Engine is BLANK: no master algorithm armed — all generation paths stand by'
+        }
+      >
+        <span className={`w-1.5 h-1.5 rounded-full ${engineArmed ? 'bg-[#0D9488]' : 'bg-[#D97706] animate-pulse'}`} />
+        <span>{engineArmed ? `ENGINE ARMED · ${armedBlockCount} BLK` : 'ENGINE BLANK'}</span>
+      </span>
 
       {/* Right: Remote Network & Security Indicators */}
       <div className="flex items-center space-x-2.5">

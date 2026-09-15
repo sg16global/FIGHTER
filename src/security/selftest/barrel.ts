@@ -5,5 +5,7 @@ import * as securityCore from '../securityCore';
 import * as sovereignBiteEngine from '../../engine/sovereignBiteEngine';
 import * as mistralClient from '../../engine/mistralClient';
 import * as ltmb from '../../memory/ltmb';
+import * as masterAlgorithm from '../../engine/masterAlgorithm';
+import * as offlineEngine from '../../engine/offlineEngine';
 
-export { doubleLayerShield, securityCore, sovereignBiteEngine, mistralClient, ltmb };
+export { doubleLayerShield, securityCore, sovereignBiteEngine, mistralClient, ltmb, masterAlgorithm, offlineEngine };

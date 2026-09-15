@@ -4,7 +4,8 @@
 // 1. File System Reading (context ingest into Sovereign Context Window)
 // 2. The Bite/Processing Mechanism (dynamically deconstructs any script into logical AST Bites)
 // 3. Automated Terminal Execution (isolated sandbox runtime + stack trace capture)
-// 4. Autonomous Error-Fixing Loop (bundles error trace + AST Bites into Mistral Codestral/Large)
+// 4. AST Bite Heal Pass — mechanical by default; model synthesis only when the
+//    master algorithm is armed (the loop has no autonomy of its own)
 //
 // Models Supported (Four Mistral Architectures):
 // - Codestral 22B (codestral-latest): Specialized code generator & FIM healer
@@ -424,128 +425,100 @@ export function executeScriptInSandbox(
 }
 
 /**
- * Production-ready Option 2 Node.js Standalone Script reference with Remote Mistral API & Airgap Support
+ * Production-ready Option 2 Node.js Standalone Script — BLANK ENGINE edition.
+ * Mirrors the studio kernel: the model has no persona, no reasoning preset and
+ * no autonomy. It executes ONLY the operator\u2019s master-algorithm file, pins
+ * egress to the sanctioned Mistral gateway, keeps safe_prompt ON, and heals
+ * deterministically offline when no algorithm is armed.
  */
 export const OPTION_2_NODEJS_REFERENCE = `/**
- * ============================================================================
- * SOVEREIGN AUTONOMOUS SOFTWARE ENGINEER // OPTION 2 NODE.JS REFERENCE SCRIPT
- * Multi-Model Mistral Architecture (7B, Large, Codestral, NeMo) + AST Auto-Healer
- * Supports Remote Mistral API & Airgapped Sovereign Execution
- * ============================================================================
+ * SOVEREIGN BLANK ENGINE // OPTION 2 NODE.JS REFERENCE
+ * Algorithm-only reasoning: loads sovereign.algorithm.md or runs the mechanical pass.
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 
-const MISTRAL_API_ENDPOINT = process.env.MISTRAL_API_URL || 'https://api.mistral.ai/v1/chat/completions';
-const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY || '';
-const DEFAULT_MODEL = 'codestral-latest'; // or 'mistral-large-latest'
+// Egress is a constant, not configuration: unsanctioned hosts never receive the key.
+const MISTRAL_API_ENDPOINT = 'https://api.mistral.ai/v1/chat/completions';
+const ALGORITHM_FILE = 'sovereign.algorithm.md';
 
-export class SovereignBiteAutoHealer {
-  constructor(
-    private workspaceDir: string,
-    private model: string = DEFAULT_MODEL,
-    private apiKey: string = MISTRAL_API_KEY
-  ) {}
+function buildExecutorContract(algorithmText, filePath) {
+  return [
+    'EXECUTION CONTRACT \u00b7 BLANK ENGINE',
+    'You possess NO persona, NO default reasoning style and NO autonomous initiative.',
+    'The MASTER ALGORITHM below is the sole authority for how you think and answer.',
+    'Where no block covers a step, emit: ALGORITHM_GAP <stage>. Never invent steps.',
+    algorithmText,
+    'Firewall invariants (not reasoning): output must stay inside the sandbox;',
+    'no destructive primitives, no credential reads, no exfiltration targets.',
+    '--- TARGET FILE: ' + filePath + ' ---',
+  ].join('\n');
+}
 
-  /**
-   * 1. File System Reading: Load local workspace files as context
-   */
-  async readWorkspaceFile(filePath: string): Promise<string> {
-    const safePath = path.resolve(this.workspaceDir, filePath);
-    if (!safePath.startsWith(path.resolve(this.workspaceDir))) {
-      throw new Error('[SECURITY SHIELD] Outside boundary path escape blocked.');
-    }
-    return fs.readFile(safePath, 'utf-8');
+export class SovereignBiteExecutor {
+  constructor(workspaceDir) {
+    this.workspaceDir = path.resolve(workspaceDir);
+    this.apiKey = process.env.MISTRAL_API_KEY || '';
   }
 
-  /**
-   * 2. The Bite/Processing Mechanism: Slice large scripts into logical AST Bites
-   */
-  breakIntoBites(sourceCode: string): Array<{ id: string; lines: string; startLine: number }> {
-    const lines = sourceCode.split('\\n');
-    const chunkSize = 25;
-    const bites = [];
-    for (let i = 0; i < lines.length; i += chunkSize) {
-      bites.push({
-        id: \`BITE-\${Math.floor(i / chunkSize) + 1}\`,
-        lines: lines.slice(i, i + chunkSize).join('\\n'),
-        startLine: i + 1,
-      });
+  async loadMasterAlgorithm() {
+    try {
+      const text = await fs.readFile(path.join(this.workspaceDir, ALGORITHM_FILE), 'utf-8');
+      return text.trim() || null; // empty file === engine stays BLANK
+    } catch {
+      return null;
     }
-    return bites;
   }
 
-  /**
-   * 3. Automated Terminal Execution via sandboxed background subprocesses
-   */
-  async executeScript(filePath: string): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-    const fullPath = path.resolve(this.workspaceDir, filePath);
-    return new Promise((resolve) => {
-      const child = spawn('node', [fullPath], {
-        cwd: this.workspaceDir,
-        env: { ...process.env, AIRGAP_SANDBOX: '1' },
-      });
-      let stdout = '';
-      let stderr = '';
-      child.stdout.on('data', (d) => (stdout += d.toString()));
-      child.stderr.on('data', (d) => (stderr += d.toString()));
-      child.on('close', (exitCode) => resolve({ exitCode: exitCode ?? 1, stdout, stderr }));
+  // Deterministic, model-free repair: AST bite type-guard insertion.
+  mechanicalHeal(code) {
+    return code.replace(
+      /const total = payload\.amount \* payload\.rate;/g,
+      "if (!payload || typeof payload.amount !== 'number') throw new TypeError('Invalid payload.amount');\n  const total = Number((payload.amount * (payload.rate ?? 1.0)).toFixed(4));"
+    );
+  }
+
+  async heal(filePath) {
+    const target = path.resolve(this.workspaceDir, filePath);
+    if (!target.startsWith(this.workspaceDir + path.sep)) {
+      throw new Error('Sandbox jail violation: ' + filePath);
+    }
+    const code = await fs.readFile(target, 'utf-8');
+    const algorithm = await this.loadMasterAlgorithm();
+
+    if (!algorithm || !this.apiKey) {
+      // BLANK STANDBY / airgapped: only the mechanical pass runs. No model is asked.
+      await fs.writeFile(target, this.mechanicalHeal(code), 'utf-8');
+      console.log('[BLANK ENGINE] Mechanical AST-bite heal applied (no master algorithm armed).');
+      return;
+    }
+
+    const res = await fetch(MISTRAL_API_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + this.apiKey },
+      body: JSON.stringify({
+        model: 'codestral-latest',
+        messages: [
+          { role: 'system', content: buildExecutorContract(algorithm, filePath) },
+          { role: 'user', content: 'Execute armed blocks against this source.\n\n' + code },
+        ],
+        // Blank slate: argmax sampling, zero built-in creativity; safe_prompt pinned ON.
+        temperature: 0,
+        top_p: 1,
+        safe_prompt: true,
+      }),
     });
+    const data = await res.json();
+    const healed = data.choices?.[0]?.message?.content?.trim();
+    // Fail closed: an empty or fenced reply never overwrites the workspace.
+    await fs.writeFile(target, healed && !healed.includes('\`\`\`') ? healed : this.mechanicalHeal(code), 'utf-8');
   }
+}
 
-  /**
-   * 4. Error-Fixing Loop: Bundles crash stack trace + Bites into Mistral Codestral
-   */
-  async runAutoHealLoop(filePath: string, maxRetries = 3): Promise<boolean> {
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      const code = await this.readWorkspaceFile(filePath);
-      const execution = await this.executeScript(filePath);
-
-      if (execution.exitCode === 0) {
-        console.log(\`[SOVEREIGN HEALER] File \${filePath} verified with EXIT CODE 0 on attempt #\${attempt}.\`);
-        return true;
-      }
-
-      console.warn(\`[CRASH CAUGHT] Attempt #\${attempt} failed. Decomposing into Bites for Codestral...\`);
-      const bites = this.breakIntoBites(code);
-
-      // Online Remote Mistral API path with fallback
-      if (this.apiKey) {
-        const response = await fetch(MISTRAL_API_ENDPOINT, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': \`Bearer \${this.apiKey}\`,
-          },
-          body: JSON.stringify({
-            model: this.model,
-            messages: [
-              {
-                role: 'system',
-                content: 'You are Codestral, an autonomous AST code repair engine. Fix all runtime exceptions.',
-              },
-              {
-                role: 'user',
-                content: \`CRASH LOG:\n\${execution.stderr}\n\nAST BITES:\n\${JSON.stringify(bites, null, 2)}\n\nReturn fixed code.\`,
-              },
-            ],
-            temperature: 0.15,
-          }),
-        });
-        const data = await response.json();
-        const healedCode = data.choices?.[0]?.message?.content?.trim() || code;
-        await fs.writeFile(path.resolve(this.workspaceDir, filePath), healedCode, 'utf-8');
-      } else {
-        // Offline deterministic AST repair
-        const healedCode = code.replace(
-          /const total = payload\\.amount \\* payload\\.rate;/g,
-          \`if (!payload || typeof payload.amount !== 'number') throw new TypeError('Invalid payload.amount');\\n  const total = Number((payload.amount * (payload.rate ?? 1.0)).toFixed(4));\`
-        );
-        await fs.writeFile(path.resolve(this.workspaceDir, filePath), healedCode, 'utf-8');
-      }
-    }
-    return false;
-  }
+// node cli:  node option2.js src/paymentProcessor.js
+if (process.argv[1] && process.argv[1].endsWith('option2.js')) {
+  new SovereignBiteExecutor(process.cwd()).heal(process.argv[2] || 'src/paymentProcessor.js')
+    .then(() => console.log('[DONE]'))
+    .catch((e) => { console.error('[DENIED]', e.message); process.exit(126); });
 }
 `;

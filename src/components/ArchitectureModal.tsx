@@ -180,10 +180,10 @@ export const ArchitectureModal: React.FC<ArchitectureModalProps> = ({
               <div className="flex items-center justify-between p-3.5 rounded-2xl bg-[#FAF6F0] border border-[#EFE7DE]">
                 <div>
                   <h3 className="font-semibold text-xs text-[#1C1917]">
-                    Option 2: Standalone Codestral Auto-Healer (.JS)
+                    Option 2: Standalone Blank-Engine Executor (.JS)
                   </h3>
                   <p className="text-xs text-[#78716C]">
-                    Production-ready modular Node.js engine with Remote Mistral API connection + offline fallback.
+                    Production-ready modular Node.js engine: executes only your sovereign.algorithm.md, pins egress to the sanctioned gateway, and falls back to the mechanical AST pass when the engine is blank.
                   </p>
                 </div>
                 <div className="flex items-center space-x-2">
@@ -205,7 +205,7 @@ export const ArchitectureModal: React.FC<ArchitectureModalProps> = ({
                   </button>
                   <button
                     onClick={() =>
-                      handleDownload('codestral-autohealer.js', OPTION_2_NODEJS_REFERENCE)
+                      handleDownload('sovereign-blank-executor.js', OPTION_2_NODEJS_REFERENCE)
                     }
                     className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-[#E07A5F] text-[#FFFFFF] text-xs font-semibold shadow-xs"
                   >

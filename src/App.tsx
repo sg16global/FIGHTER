@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback, Fragment } from 'react';
-import { ChevronRight, ShieldCheck } from 'lucide-react';
+import { useEffect, useState, useCallback, useMemo, Fragment } from 'react';
+import { ChevronRight, ShieldCheck, Code2 as Code2Icon, BrainCircuit as BrainIcon } from 'lucide-react';
 import { PinterestHeader } from './components/PinterestHeader';
 import { PinterestSidebar, RecentChatItem, INITIAL_RECENTS } from './components/PinterestSidebar';
 import { PinterestHeroChat } from './components/PinterestHeroChat';
@@ -50,10 +50,23 @@ import {
   saveRemoteApiConfig,
   testRemoteMistralConnection,
   generateRemoteMistralChat,
-  buildMistralSystemPrompt,
+  buildExecutorPrompt,
   DEFAULT_MISTRAL_MODEL,
 } from './engine/mistralClient';
 import { generateOfflineMistralResponse } from './engine/offlineEngine';
+import {
+  AppMode,
+  LogicBlock,
+  STANDBY_NOTICE,
+  activeBlockCount,
+  compileMasterAlgorithm,
+  isEngineArmed,
+  loadAppMode,
+  loadLogicBlocks,
+  saveAppMode,
+  saveLogicBlocks,
+} from './engine/masterAlgorithm';
+import { PinterestBrainStudio } from './components/PinterestBrainStudio';
 import {
   loadMemoryBank,
   saveMemoryBank,
@@ -68,6 +81,22 @@ export function App() {
   const [activeFileId, setActiveFileId] = useState<string>('file-payment-processor');
   const [activeModel, setActiveModel] = useState<MistralModelId>(DEFAULT_MISTRAL_MODEL);
   const [activeAgent, setActiveAgent] = useState<AgentId>('kali-gpt');
+
+  // ── OPERATIONAL MODULES — exactly two, presented on every boot ────────────
+  // CODE MODE: generation, sandbox runs, workspace/terminal environment.
+  // BRAIN MODE: layer-by-layer master-algorithm construction & scaffolding.
+  const [appMode, setAppMode] = useState<AppMode>(() => loadAppMode() ?? 'CODE');
+  const [bootResolved, setBootResolved] = useState(false);
+
+  // ── MASTER ALGORITHM — sole reasoning authority over the blank engine ─────
+  const [logicBlocks, setLogicBlocks] = useState<LogicBlock[]>(() => loadLogicBlocks());
+  const engineArmed = isEngineArmed(logicBlocks);
+  const armedBlockCount = activeBlockCount(logicBlocks);
+  const compiledAlgorithm = useMemo(() => compileMasterAlgorithm(logicBlocks), [logicBlocks]);
+
+  useEffect(() => {
+    saveAppMode(appMode);
+  }, [appMode]);
 
   // Window frame state
   const [isMaximized, setIsMaximized] = useState<boolean>(true);
@@ -106,6 +135,7 @@ export function App() {
     '$ │ LAYER 2 SHELL GPT     SHELLWEAVER-02 · command tokenization · strict-argv allowlist',
     '$ │ LAYER 3 TERMINAL GPT  AUTORUN-03 · single-use hash-bound permits · scope-locked sandbox',
     '$ └─ Every chat, editor, patch and terminal action is chained through all three.',
+    '$ [KERNEL] ENGINE POSTURE: BLANK — model personas & reasoning presets stripped; the master algorithm (BRAIN MODE) is the sole thinking authority.',
     '$ Studio front-end running in clean Pinterest design system.',
   ]);
 
@@ -231,6 +261,7 @@ export function App() {
   const handleNewChat = () => {
     setMessages([]);
     setActiveRecentId(null);
+    setAppMode('CODE');
     setCurrentView('chats');
   };
 
@@ -242,6 +273,7 @@ export function App() {
     if (item.modelId) {
       setActiveModel(item.modelId);
     }
+    setAppMode('CODE');
     setCurrentView('chats');
     setMessages([
       {
@@ -657,7 +689,9 @@ export function App() {
           // If online with API key, perform live remote synthesis. The reply is
           // UNTRUSTED: LAYER 1 must clear it, otherwise the deterministic local
           // AST patch stands (fail-closed against a compromised or hostile gateway).
-          if (remoteConfig.mode === 'online' && remoteConfig.apiKey.trim()) {
+          // Model synthesis inside the heal pass requires the master algorithm:
+          // the loop never grants Codestral standalone repair "initiative".
+          if (engineArmed && remoteConfig.mode === 'online' && remoteConfig.apiKey.trim()) {
             try {
               const remoteRes = await generateRemoteMistralChat({
                 model: 'codestral-latest',
@@ -665,11 +699,18 @@ export function App() {
                 messages: [
                   {
                     role: 'system',
-                    content: 'You are Codestral, an autonomous AST code repair engine. Return only corrected JavaScript code.',
+                    content: buildExecutorPrompt({
+                      modelId: 'codestral-latest',
+                      operationMode: 'online',
+                      filePath,
+                      fileSnippet: initialCode,
+                      masterAlgorithm: compiledAlgorithm,
+                      modeLabel: 'CODE',
+                    }),
                   },
                   {
                     role: 'user',
-                    content: `Fix the following TypeError:\n${execResult.errorStackTrace}\n\nCode:\n${initialCode}`,
+                    content: `APPLY VERIFY→EXECUTE BLOCKS TO THIS CRASH:\n${execResult.errorStackTrace}\n\nCode:\n${initialCode}`,
                   },
                 ],
               });
@@ -692,7 +733,7 @@ export function App() {
             step: 4,
             phase: 'SOVEREIGN_HEAL_PATCH',
             timestamp: new Date().toLocaleTimeString(),
-            message: `[4/5] Codestral synthesized null/NaN guard; patch cleared LAYER 1 output gate before touching ${filePath}.`,
+            message: `[4/5] Patch composed from verified AST-bite healing${engineArmed ? ' + master-algorithm model synthesis' : ' (mechanical pass — engine blank, no model synthesis)'}. Cleared LAYER 1 output gate before touching ${filePath}.`,
             codeDiffSummary: `+ if (!payload || typeof payload.amount !== 'number') throw new TypeError(...)\n+ const total = Number((payload.amount * (payload.rate ?? 1.0)).toFixed(4));`,
           };
           setAutoHealTraces((prev) => [...prev, step4]);
@@ -752,6 +793,37 @@ export function App() {
     }, 350);
   };
 
+  // BRAIN MODE commit path. The compiled algorithm is itself untrusted input:
+  // KALI GPT (L1) inspects it BEFORE it may arm the backend, and the verdict
+  // is committed to the hash-chained ledger like any other payload.
+  const handleCommitAlgorithm = (blocks: LogicBlock[]): { ok: boolean; reason?: string } => {
+    const compiled = compileMasterAlgorithm(blocks);
+    if (compiled) {
+      const audit = kaliInspect(compiled, 'USER_PROMPT');
+      if (audit.denied) {
+        logSovereign([
+          `[KALI GPT · LAYER 1] MASTER ALGORITHM commit DENIED · ${audit.threats[0]?.ruleId ?? 'critical finding'} · ${audit.threats[0]?.category ?? 'POLICY'} · ledger #${audit.ledgerSeq}`,
+        ]);
+        return {
+          ok: false,
+          reason: `LAYER 1 denied the commit: ${audit.threats[0]?.mitigation ?? 'critical rule match'}`,
+        };
+      }
+      logSovereign([
+        `[KALI GPT · LAYER 1] Master algorithm pre-cleared for arming · ${compiled.length} chars · ledger #${audit.ledgerSeq}`,
+      ]);
+    }
+    setLogicBlocks(blocks);
+    saveLogicBlocks(blocks);
+    const count = activeBlockCount(blocks);
+    logSovereign([
+      count > 0
+        ? `$ [KERNEL] MASTER ALGORITHM COMMITTED — engine ARMED (${count} block(s)). Generation paths released.`
+        : '$ [KERNEL] Master algorithm empty — engine returned to BLANK STANDBY. All synthesis on hold.',
+    ]);
+    return { ok: true };
+  };
+
   // User chat message handling
   const handleSendMessage = (userText: string) => {
     const userMsg: ChatMessage = {
@@ -803,17 +875,39 @@ export function App() {
       return;
     }
 
+    // BLANK ENGINE POLICY: freeform generation requires an armed master
+    // algorithm — until then no model, offline or remote, is asked to think.
+    // Security-layer console commands (status/translation/node runs) are
+    // enforcement operations and stay available in both engine states.
+    const isStructuredLayerCommand =
+      activeAgent === 'kali-gpt' ||
+      activeAgent === 'shell-gpt' ||
+      (activeAgent === 'terminal-gpt' &&
+        (/^\/(recon|scan|audit|harden|exploit|autoheal|run)\b/i.test(userText.trim()) ||
+          /^node\s+/i.test(userText.trim()) ||
+          userText.toLowerCase().includes('autoheal')));
+
+    if (!isStructuredLayerCommand && !engineArmed) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `msg-blank-${Date.now()}`,
+          sender: 'SOVEREIGN_AI',
+          timestamp: new Date().toLocaleTimeString(),
+          text: STANDBY_NOTICE,
+        },
+      ]);
+      logSovereign([
+        '$ [KERNEL] Generation held — ENGINE BLANK (no armed master algorithm). Compose blocks in BRAIN MODE.',
+      ]);
+      return;
+    }
+
     setIsStreaming(true);
 
     const runAgentPipeline = async () => {
       const modelTitle = MISTRAL_MODELS[activeModel].displayName;
-      const isStructuredAgentCommand =
-        activeAgent === 'kali-gpt' ||
-        activeAgent === 'shell-gpt' ||
-        (activeAgent === 'terminal-gpt' &&
-          (/^\/(recon|scan|audit|harden|exploit|autoheal|run)\b/i.test(userText.trim()) ||
-            /^node\s+/i.test(userText.trim()) ||
-            userText.toLowerCase().includes('autoheal')));
+      const isStructuredAgentCommand = isStructuredLayerCommand;
 
       let response = generateAgentResponse(activeAgent, userText, {
         activeFilePath: activeFile.path,
@@ -871,9 +965,9 @@ export function App() {
         response = enriched;
       }
 
-      if (activeAgent === 'terminal-gpt' && userText.toLowerCase().includes('autoheal')) {
-        window.setTimeout(() => handleTriggerAutoHealLoop(), 250);
-      }
+      // NOTE: the former word-triggered auto-launch of the heal loop was removed —
+      // the engine never self-initiates; the operator starts the mechanical pass
+      // from Code Studio / hero / drawer controls.
 
       const bites = parseCodeIntoBites(activeFile.content, activeFile.path);
       const showBites = /(decompose|fix|bug|bites|isolate|patch)/i.test(userText);
@@ -904,13 +998,13 @@ export function App() {
           messages: [
             {
               role: 'system',
-              content: buildMistralSystemPrompt({
+              content: buildExecutorPrompt({
                 modelId: activeModel,
-                agentName: AGENTS[activeAgent].name,
-                agentRole: AGENTS[activeAgent].role,
+                operationMode: 'online',
                 filePath: activeFile.path,
                 fileSnippet: activeFile.content,
-                operationMode: 'online',
+                masterAlgorithm: compiledAlgorithm,
+                modeLabel: appMode,
               }),
             },
             { role: 'user', content: userText },
@@ -933,6 +1027,7 @@ export function App() {
             prompt: userText,
             filePath: activeFile.path,
             fileContent: activeFile.content,
+            logicBlocks,
           });
           aiResponseText = gateOutput(offlineRes.text);
           tokenMetrics = {
@@ -950,6 +1045,7 @@ export function App() {
           prompt: userText,
           filePath: activeFile.path,
           fileContent: activeFile.content,
+          logicBlocks,
         });
         aiResponseText = gateOutput(offlineRes.text);
         tokenMetrics = {
@@ -1040,7 +1136,7 @@ export function App() {
     </main>
   ) : (
     <div
-      className={`w-screen h-screen bg-pinterest-canvas text-[#1C1917] flex flex-col overflow-hidden select-none ${
+      className={`relative w-screen h-screen bg-pinterest-canvas text-[#1C1917] flex flex-col overflow-hidden select-none ${
         isMaximized ? 'p-0' : 'p-3'
       }`}
     >
@@ -1052,8 +1148,10 @@ export function App() {
       >
         {/* Top Header Bar */}
         <PinterestHeader
-          currentView={currentView}
-          onSelectView={setCurrentView}
+          appMode={appMode}
+          onSelectMode={setAppMode}
+          engineArmed={engineArmed}
+          armedBlockCount={armedBlockCount}
           remoteStatus={remoteStatus}
           activeModel={activeModel}
           onOpenSettings={() => setSettingsModalOpen(true)}
@@ -1084,13 +1182,17 @@ export function App() {
           {/* Left Minimalist Sidebar */}
           <PinterestSidebar
             currentView={currentView}
-            onSelectView={setCurrentView}
+            onSelectView={(v) => {
+              setAppMode('CODE');
+              setCurrentView(v);
+            }}
             onNewChat={handleNewChat}
             onOpenSettings={() => setSettingsModalOpen(true)}
             files={files}
             activeFileId={activeFile.id}
             onSelectFile={(id) => {
               setActiveFileId(id);
+              setAppMode('CODE');
               setCurrentView('code');
             }}
             activeAgent={activeAgent}
@@ -1103,6 +1205,16 @@ export function App() {
 
           {/* Central Main Experience Area */}
           <main className="flex-1 flex flex-col min-h-0 min-w-0 bg-[#FAF6F0] overflow-hidden relative">
+            {/* ── BRAIN MODE: master algorithm console (replaces the workspace surface) ── */}
+            {appMode === 'BRAIN' ? (
+              <PinterestBrainStudio
+                committed={logicBlocks}
+                engineArmed={engineArmed}
+                onCommit={handleCommitAlgorithm}
+                onSwitchToCode={() => setAppMode('CODE')}
+              />
+            ) : (
+            <>
             {/* VIEW 1: CHATS VIEW */}
             {currentView === 'chats' && (
               messages.length === 0 ? (
@@ -1116,6 +1228,8 @@ export function App() {
                   onOpenSettings={() => setSettingsModalOpen(true)}
                   activeAgent={activeAgent}
                   onSelectAgent={setActiveAgent}
+                  engineArmed={engineArmed}
+                  onOpenBrainMode={() => setAppMode('BRAIN')}
                 />
               ) : (
                 /* Active Conversation Feed */
@@ -1349,6 +1463,8 @@ export function App() {
                 </div>
               </div>
             )}
+            </>
+            )}
           </main>
         </div>
       </div>
@@ -1383,6 +1499,84 @@ export function App() {
         remoteStatus={remoteStatus}
         onRefreshStatus={probeRemoteConnection}
       />
+
+      {/* ── BOOT ROUTER — presented on every launch: exactly two operational modules ── */}
+      {!bootResolved && (
+        <div className="absolute inset-0 z-[60] bg-[#FAF6F0]/95 backdrop-blur-sm flex items-center justify-center p-6 select-none">
+          <div className="w-full max-w-3xl space-y-6">
+            <div className="text-center space-y-2">
+              <div className="mx-auto w-12 h-12 rounded-2xl bg-[#1C1917] text-[#FAF6F0] flex items-center justify-center font-heading font-bold text-xl shadow-lg">
+                A
+              </div>
+              <h1 className="font-heading text-2xl font-semibold text-[#1C1917]">Aegis Sovereign Studio — select operational module</h1>
+              <p className="text-xs text-[#78716C] max-w-xl mx-auto">
+                The intelligence engine boots <strong>BLANK</strong>: personas and reasoning presets are stripped.
+                Code Mode executes through your armed master algorithm; Brain Mode builds it. Both run the same
+                backend kernel.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {(
+                [
+                  {
+                    mode: 'CODE' as AppMode,
+                    icon: Code2Icon,
+                    accent: '#10B981',
+                    title: 'Code Mode',
+                    desc: 'Code generation, sandbox execution, and the VS Code / Community workspace environment — AST bites, permits, terminal, files.',
+                    hint: 'Requires an armed master algorithm for generation; security-layer operations and mechanical runs always available.',
+                  },
+                  {
+                    mode: 'BRAIN' as AppMode,
+                    icon: BrainIcon,
+                    accent: '#8B5CF6',
+                    title: 'Brain Mode',
+                    desc: 'Layer-by-layer algorithm construction and architectural scaffolding: PARSE → PLAN → EXECUTE → VERIFY logic blocks.',
+                    hint: 'Whatever you commit here is the ONLY way the engine is allowed to think, parse and execute.',
+                  },
+                ] as const
+              ).map(({ mode, icon: Icon, accent, title, desc, hint }) => (
+                <button
+                  key={mode}
+                  onClick={() => {
+                    setAppMode(mode);
+                    setBootResolved(true);
+                  }}
+                  className={`pinterest-card p-6 text-left space-y-3 transition-all hover:shadow-lg group ${
+                    loadAppMode() === mode ? 'border-[#D6C8BA] ring-2 ring-[#E07A5F]/20' : ''
+                  }`}
+                >
+                  <div
+                    className="w-10 h-10 rounded-2xl flex items-center justify-center"
+                    style={{ backgroundColor: accent + '1F', color: accent }}
+                  >
+                    <Icon className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-bold text-[#1C1917] group-hover:text-[#E07A5F] transition-colors">
+                      {title}
+                    </h2>
+                    <p className="text-[11px] text-[#57534E] mt-1 leading-snug">{desc}</p>
+                    <p className="text-[10px] text-[#A8A29E] mt-2 leading-snug italic">{hint}</p>
+                  </div>
+                  <div className="flex items-center justify-between pt-1">
+                    <span className="flex items-center gap-1 text-[10px] font-semibold text-[#0F766E]">
+                      <ShieldCheck className="w-3 h-3" />
+                      KALI · SHELL · TERMINAL auto-enforced
+                    </span>
+                    <span className="text-[11px] font-semibold text-[#E07A5F]">Enter →</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            <p className="text-center text-[10px] font-mono text-[#A8A29E]">
+              L1 rule-base · L2 argv allowlist · L3 single-use permits — active under BOTH modules, cannot be disabled from either
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
