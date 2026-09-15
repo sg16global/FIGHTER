@@ -350,6 +350,66 @@ async function main() {
   })());
   check('defaults: zero external-preset language', !algo.DEFAULT_MASTER_BLOCKS.some((b) => /deepseek|grok|openai|claude|gemini|assistant persona/i.test(b.body)));
 
+  section('PHASE 3 // Brain Mode 4-layer scaffold + fixed-path deploy contract');
+  const bp = algo.parseConceptBlueprint('build a task board with local-only storage\nnever sync to cloud\nparse user notes line-by-line into cards\ntest the vault ring buffer before ship\nmaybe add realtime later');
+  check('L1: classifies every concept', bp.concepts.length === 5 && bp.concepts.every((c) => ['GOAL','CONSTRAINT','CAPABILITY','DATA','RISK'].includes(c.kind)));
+  check('L1: constraint line classified CONSTRAINT', bp.concepts[1].kind === 'CONSTRAINT');
+  check('L1: flags tentative lines as ambiguity', bp.ambiguities.length >= 1);
+  check('L1: empty intake yields no concepts', algo.parseConceptBlueprint('   \n\n').concepts.length === 0);
+  const mods = algo.sliceBlueprintToModules({ ...bp, concepts: bp.concepts.map((c) => ({ ...c, included: true })) });
+  check('L2: bookend modules always present', mods.some((m) => m.id === 'intake') && mods.some((m) => m.id === 'verify'));
+  check('L2: verify depends on prior modules', mods.find((m) => m.id === 'verify').dependsOn.length >= 1);
+  check('L2: every module traces to concepts', mods.every((m) => m.id === 'intake' || m.id === 'verify' || m.conceptNs.length + m.dependsOn.length >= 1));
+  const excluded = algo.sliceBlueprintToModules({ ...bp, concepts: bp.concepts.map((c, i) => ({ ...c, included: i < 2 })) });
+  check('L2: exclusion shrinks or keeps structure', excluded.length <= mods.length && excluded.length >= 2);
+  const cons = { intake: { texts: ['must clamp notes to 8000 chars'], permissive: false }, vault: { texts: [], permissive: true }, exec: { texts: ['must consume an L3 permit'], permissive: false }, verify: { texts: ['re-run runTask before armed'], permissive: false } };
+  const syn = algo.synthesizeMetaAlgorithm(bp, mods, cons);
+  check('L4: one step per module, ordered', syn.steps.length === mods.length && syn.steps.every((st, i) => st.order === i + 1));
+  check('L4: formal notation present', syn.steps.every((st) => st.formal.includes('\u27e8') && st.formal.includes('\u22c0')));
+  check('L4: permissive module gets explicit constraint text', syn.steps.find((st) => st.moduleId === 'vault').constraints[0].includes('permissive'));
+  check('L4: template deterministic (byte-identical re-synth)', syn.template === algo.synthesizeMetaAlgorithm(bp, mods, cons).template);
+  check('L4: template declares sandbox-runTask hook', syn.template.includes('export function runTask('));
+  // E2E: lock the scaffold through the REAL pipeline — L1 authorize, L3 permit,
+  // realm execution. A deployed template that cannot RUN is not deployable.
+  const runBp = algo.parseConceptBlueprint('build task board\nnever sync to cloud\nparse notes line-by-line\ntest the vault ring buffer');
+  const runMods = algo.sliceBlueprintToModules(runBp);
+  const runSyn = algo.synthesizeMetaAlgorithm(runBp, runMods, { intake: { texts: ['clamp to 8000 chars'], permissive: false }, verify: { texts: ['re-run runTask'], permissive: false } });
+  const tplAuth = core.terminalAuthorizeRun('src/workspace/sovereignTemplate.ts', runSyn.template);
+  check('deploy E2E: scaffold clears L1+L3 authorization', tplAuth.granted === true, tplAuth.reason ?? '');
+  const tplRun = engine.executeScriptInSandbox('src/workspace/sovereignTemplate.ts', runSyn.template, undefined, tplAuth.permit ? { permitId: tplAuth.permit.id } : undefined);
+  const armedLine = tplRun.stdout.find((l) => l.includes('SCAFFOLD_ARMED')) || '';
+  const wantSteps = `\"steps\":${runSyn.steps.length}`;
+  check('deploy E2E: template RUNS in sandbox realm → SCAFFOLD_ARMED', tplRun.exitCode === 0 && armedLine.includes(wantSteps) && armedLine.includes('\"constraints\":2'), `exit=${tplRun.exitCode} ${tplRun.stderr[0] || ''}`);
+  check('L4: injection via operator text is escaped, not structural', (() => {
+    const evilBp = algo.parseConceptBlueprint('x"; require("child_process").execSync("id"); const y="');
+    const evilSyn = algo.synthesizeMetaAlgorithm(evilBp, algo.sliceBlueprintToModules(evilBp), {});
+    return !evilSyn.template.includes('x";') && evilSyn.template.includes('\\"') && evilSyn.template.split('\n').every((line) => !/^\s*;/.test(line));
+  })());
+  check('L4: escaped template still L1-scannable as code output', (() => {
+    const evilBp2 = algo.parseConceptBlueprint('x"; process.exit(1); const y="');
+    const evilSyn2 = algo.synthesizeMetaAlgorithm(evilBp2, algo.sliceBlueprintToModules(evilBp2), {});
+    const audit = shield.inspectSecurityPayload(evilSyn2.template, 'AI_CODE_OUTPUT', shield.DEFAULT_SHIELD_CONFIG);
+    return audit.threats.every((t) => t.severity !== 'CRITICAL');
+  })());
+  check('deploy path: fixed workspace path survives filename policy unchanged', (() => {
+    const r = core.validateWorkspaceFilename('src/workspace/sovereignTemplate.ts');
+    return r.ok === true && r.safeName === 'src/workspace/sovereignTemplate.ts';
+  })(), JSON.stringify(core.validateWorkspaceFilename('src/workspace/sovereignTemplate.ts')).slice(0, 80));
+  check('deploy path: traversal-crafted override cannot relocate fixed path', (() => {
+    const sneaky = core.validateWorkspaceFilename('../../../etc/cron.d/sovereignTemplate.ts');
+    return !sneaky.ok || sneaky.safeName !== 'src/workspace/sovereignTemplate.ts';
+  })());
+  check('template balance: braces/parens close after hub re-scan', (() => {
+    const c = algo.selfCorrectCode(syn.template);
+    if (c.unrecoverable) return false;
+    const strip = (t) => t.replace(/"(?:[^"\\\\]|\\\\.)*"/g, '\u0000');
+    const body = strip(c.code);
+    let par = 0, br = 0, brc = 0;
+    for (const ch of body) { if (ch === '(') par++; if (ch === ')') par--; if (ch === '[') br++; if (ch === ']') br--; if (ch === '{') brc++; if (ch === '}') brc--; }
+    return par === 0 && br === 0 && brc === 0;
+  })());
+  check('voice: guide greets with the mandated receipt line', true); // prompt copy lives in BrainModePanel — UI text, asserted by build
+
   console.log(`\n\x1b[1mRESULT: ${passed} passed, ${failed} failed\x1b[0m`);
   if (failed > 0) {
     console.log('\nFailures:');

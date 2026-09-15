@@ -698,7 +698,7 @@ function stripCodeNoise(code: string): string {
     .replace(/^[ \t]*```[a-zA-Z]*[ \t]*$/gm, '')
     .replace(/^>\s?/gm, '')
     .replace(/;;+/g, ';')
-    .replace(/,\s*([)}\]])/g, '$1');
+    .replace(/,[ \t]*\r?\n[ \t]*([)}\]])/g, '$1\n$2');
 }
 
 function scanBalance(code: string): { openers: number; mismatch: boolean } {
@@ -1009,4 +1009,336 @@ export function conceptsToBlocks(rawNotes: string): LogicBlock[] {
 export function hubVoice(map: MentalMap, env: IdeEnvironment, evalResult: SelfEvalResult): string {
   const state = evalResult.rewrote ? `self-eval rewrote ${evalResult.fixes.length} issue(s) before show` : 'self-eval clean';
   return `> Boss — ${map.summary} · env ${env.flavor} · ${state}.`;
+}
+
+// ============================================================================
+// PHASE 3 — BRAIN MODE COMPLETE SCAFFOLDING (strict 4-layer pipeline)
+// ----------------------------------------------------------------------------
+// Deterministic guide flow, driven by the operator's own words at every step:
+//   L1 Concept Parsing      raw notes → classified conceptual blueprint
+//   L2 Structural Breakdown blueprint → strict core operational modules
+//   L3 Logic Injection        per-module constraints, asked chronologically
+//   L4 Scaffolding & Lock     synthesized mathematical/logical meta-algorithm
+// The engine never jumps ahead: each layer validates against the previous one,
+// and only a completed Layer 4 can LOCK & DEPLOY the sovereign template file.
+// ============================================================================
+
+export type ConceptKind = 'GOAL' | 'CONSTRAINT' | 'CAPABILITY' | 'DATA' | 'RISK';
+
+export interface BlueprintConcept {
+  n: number;
+  statement: string;
+  kind: ConceptKind;
+  keywords: string[];
+  included: boolean;
+}
+
+export interface ConceptBlueprint {
+  concepts: BlueprintConcept[];
+  ambiguities: string[];
+  summary: string;
+}
+
+const KIND_PATTERNS: Array<[ConceptKind, RegExp]> = [
+  ['CONSTRAINT', /\b(?:must|never|always|only|forbid|restrict|shall|require[d]?|not allowed)\b/i],
+  ['RISK', /\b(?:risk|vulnerab|attack|inject|leak|breach|malware|exfil|abuse|spoof)\b/i],
+  ['DATA', /\b(?:data|store|storage|file|database|record|log|vault|persist|state|cache|history)\b/i],
+  ['CAPABILITY', /\b(?:pars|scan|detect|generat|compil|render|sync|validat|index|transform|execut|analyz|recogni[sz]e|isolat)\w*/i],
+  ['GOAL', /\b(?:build|create|add|implement|support|deliver|achieve|design|construct|set ?up)\b/i],
+];
+
+const STOPWORDS = new Set(['with','from','this','that','them','they','your','mine','into','onto','when','then','than','have','has','will','shall','must','need','want','like','just','also','each','all','any','are','was','were','been','being','for','and','not','but','you','our','its','the','a','an','of','to','in','on','at','by','it','is','be','do','so','if','or','as','we','i']);
+
+/** L1 · parse raw notes into a classified, per-line conceptual blueprint. */
+export function parseConceptBlueprint(rawNotes: string): ConceptBlueprint {
+  const lines = rawNotes
+    .split(/\r?\n/)
+    .map((l) => l.trim().replace(/^[-*•\d.)\s]+/, ''))
+    .filter((l) => l.length > 2);
+  const concepts: BlueprintConcept[] = [];
+  const ambiguities: string[] = [];
+
+  lines.slice(0, 40).forEach((statement, i) => {
+    const kind = KIND_PATTERNS.find(([, re]) => re.test(statement))?.[0] ?? 'GOAL';
+    const words = statement
+      .toLowerCase()
+      .replace(/[^a-z0-9\s.-]/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length > 2 && !STOPWORDS.has(w));
+    const keywords = [...new Set(words)].slice(0, 6);
+    concepts.push({ n: i + 1, statement: statement.slice(0, 400), kind, keywords, included: true });
+    if (/\b(?:maybe|might|perhaps|TBD|TODO|idk|figure out|somehow|etc\.?)\b/i.test(statement)) {
+      ambiguities.push(`Line ${i + 1} is tentative ("${statement.slice(0, 60)}") — confirm or sharpen before Layer 2.`);
+    }
+    if (words.length < 2) {
+      ambiguities.push(`Line ${i + 1} is thin on keywords — add what it operates on.`);
+    }
+  });
+  if (concepts.length < 2) {
+    ambiguities.push('Fewer than 2 concepts — the scaffold will be minimal; drop another note if you can, boss.');
+  }
+
+  const kinds = concepts.reduce<Record<string, number>>((acc, c) => ((acc[c.kind] = (acc[c.kind] ?? 0) + 1), acc), {});
+  const summary = `${concepts.length} concept(s) · ${Object.entries(kinds).map(([k, v]) => `${k}×${v}`).join(' ')}${ambiguities.length ? ` · ${ambiguities.length} ambiguity flag(s)` : ''}`;
+  return { concepts, ambiguities, summary };
+}
+
+export interface ScaffoldModule {
+  id: string;
+  name: string;
+  responsibility: string;
+  inputs: string[];
+  outputs: string[];
+  dependsOn: string[];
+  conceptNs: number[];
+}
+
+const MODULE_TAXONOMY: Array<{
+  id: string;
+  name: string;
+  responsibility: string;
+  inputs: string[];
+  outputs: string[];
+  match: RegExp;
+  bookend?: 'head' | 'tail';
+}> = [
+  { id: 'intake', name: 'Intake & Parsing', responsibility: 'Tokenize operator input line-by-line; classify intents; normalize before anything consumes it.', inputs: ['raw operator notes', 'prompt stream'], outputs: ['classified concept set'], match: /\b(?:pars|read|scan|input|tokeni[sz]e|prompt|transcri|intake|recogni[sz]e)\w*/i, bookend: 'head' },
+  { id: 'logic', name: 'Logic Core', responsibility: 'Hold the plan: map concepts to decisions, route work, enforce operator constraints.', inputs: ['classified concepts', 'armed constraints'], outputs: ['ordered execution plan'], match: /\b(?:rule|logic|constraint|plan|map|match|score|route|policy|architect|design|orchestrat|decid)\w*/i },
+  { id: 'vault', name: 'Local Vault', responsibility: 'Machine-only persistence: session history, records, blueprints. Zero cloud path.', inputs: ['state transitions', 'records'], outputs: ['durable local history'], match: /\b(?:store|persist|vault|history|record|log|file|database|memory|cache|state)\w*/i },
+  { id: 'exec', name: 'Execution Engine', responsibility: 'Build/generate/heal under the sandbox realm; never bypasses permits.', inputs: ['ordered plan', 'workspace files'], outputs: ['code artifacts', 'run results'], match: /\b(?:execut|run|build|generat|compil|render|deploy|sandbox|heal|implement|create)\w*/i },
+  { id: 'egress', name: 'Egress Gateway', responsibility: 'Airgapped by default; one-shot tickets against the pinned endpoint list only.', inputs: ['utility request', 'ticket'], outputs: ['sanctioned responses'], match: /\b(?:network|gateway|fetch|http|download|upload|git|push|pull|api|web|asset|cloud)\w*/i },
+  { id: 'verify', name: 'Verification', responsibility: 'Self-eval every output pre-presentation; re-check invariants; sign the ledger.', inputs: ['artifacts', 'constraint set'], outputs: ['verdict + fix log'], match: /\b(?:test|verif|check|audit|validate|review|scan|guard|assur|eval)\w*/i, bookend: 'tail' },
+];
+
+/** L2 · slice the validated blueprint into strict core operational modules. */
+export function sliceBlueprintToModules(blueprint: ConceptBlueprint): ScaffoldModule[] {
+  const included = blueprint.concepts.filter((c) => c.included);
+  const scored = MODULE_TAXONOMY.map((t) => {
+    const hits = included.filter((c) => t.match.test(c.statement) || c.keywords.some((k) => t.match.test(k)));
+    return { t, hits };
+  });
+  const active = scored.filter(({ t, hits }) => hits.length > 0 || t.bookend);
+  const chosen = active.length > 0 ? active : scored.filter(({ t }) => t.id === 'logic');
+
+  const modules: ScaffoldModule[] = chosen.map(({ t, hits }) => ({
+    id: t.id,
+    name: t.name,
+    responsibility: t.responsibility,
+    inputs: [...t.inputs],
+    outputs: [...t.outputs],
+    dependsOn: [],
+    conceptNs: hits.map((h) => h.n),
+  }));
+
+  const ids = new Set(modules.map((m) => m.id));
+  const order = ['intake', 'logic', 'vault', 'exec', 'egress', 'verify'];
+  for (const m of modules) {
+    const mi = order.indexOf(m.id);
+    const deps: string[] = [];
+    if (m.id !== 'intake' && ids.has('intake')) deps.push('intake');
+    for (const cand of order) {
+      const ci = order.indexOf(cand);
+      if (ci < mi && ids.has(cand) && cand !== 'intake' && !deps.includes(cand)) deps.push(cand);
+    }
+    m.dependsOn = deps;
+  }
+  return order.filter((id) => ids.has(id)).map((id) => modules.find((m) => m.id === id)!);
+}
+
+export type ModuleConstraints = Record<string, { texts: string[]; permissive: boolean }>;
+
+export interface MetaStep {
+  order: number;
+  stage: LogicStage;
+  moduleId: string;
+  formal: string;
+  constraints: string[];
+}
+
+const STAGE_BY_MODULE: Record<string, LogicStage> = {
+  intake: 'PARSE',
+  logic: 'PLAN',
+  vault: 'EXECUTE',
+  exec: 'EXECUTE',
+  egress: 'EXECUTE',
+  verify: 'VERIFY',
+};
+
+/** JSON-safe single-line literal for embedding operator text in TS output. */
+/**
+ * One-line, comment-safe form of a statement: strips every character that
+ * could terminate a block comment or open a template literal, so raw operator
+ * notes can be echoed into generated headers without corrupting the file.
+ */
+export function toCommentSafe(raw: string): string {
+  return raw
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/[*\/]/g, '\u00b7')
+    .replace(/[`"'`]/g, '\u00b4')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 110);
+}
+
+function tsLit(raw: string): string {
+  const cleaned = raw
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 240);
+  return JSON.stringify(cleaned);
+}
+
+/**
+ * L4 · synthesize everything into a solid, deployable meta-algorithm.
+ * Formal form per step:  Sₖ = ⟨stage, module | ⋀Cₖ⟩ , ctxₖ₊₁ = Sₖ(ctxₖ)
+ * The emitted template is strict TypeScript, sandbox-runnable (runTask hook)
+ * and deterministic: identical inputs → byte-identical file.
+ */
+export function synthesizeMetaAlgorithm(
+  blueprint: ConceptBlueprint,
+  modules: ScaffoldModule[],
+  constraints: ModuleConstraints,
+): { steps: MetaStep[]; template: string } {
+  const steps: MetaStep[] = modules.map((m, i) => {
+    const c = constraints[m.id];
+    // A module answered at Layer 3 with no live text (or an explicit skip) is
+    // recorded as permissive — never silently constraint-less.
+    const texts =
+      c === undefined ? [] : c.texts.length > 0 ? c.texts : ['permissive — shield remains authoritative'];
+    return {
+      order: i + 1,
+      stage: STAGE_BY_MODULE[m.id] ?? 'EXECUTE',
+      moduleId: m.id,
+      formal: `S${i + 1} = \u27e8${STAGE_BY_MODULE[m.id] ?? 'EXECUTE'}(${m.id}) | \u22c0 C_${m.id}[${texts.length}]\u27e9 : ctx${i + 1} = S${i + 1}(ctx${i})`,
+      constraints: texts,
+    };
+  });
+
+  const totalConstraints = steps.reduce((n, s) => n + s.constraints.length, 0);
+  // Template grammar is deliberately sandbox-executable: the engine's TS
+  // cleaner strips `export interface`/`export type`/`export <decl>` and
+  // nothing else — so types live exclusively in interfaces, aliases and
+  // JSDoc; no `as const`, no inline annotations, no bare `export { }`.
+  // The file is strict-TS in shape, real TypeScript in the editor, and
+  // returns SCAFFOLD_ARMED when run through the L3 permit-gated sandbox.
+  const L: string[] = [];
+  L.push('/**');
+  L.push(' * \u2550\u2550\u2550 SOVEREIGN MASTER ALGORITHM TEMPLATE \u2550\u2550\u2550');
+  L.push(' * Generated by BRAIN MODE Phase 3 — strict 4-layer chronological scaffold.');
+  L.push(` * L1 blueprint: ${blueprint.concepts.filter((c) => c.included).length} concept(s) \u00b7 L2 modules: ${modules.length} \u00b7 L3 constraints: ${totalConstraints} \u00b7 L4: this file.`);
+  L.push(' * DO NOT edit by hand — re-deploy from Brain Mode to regenerate (lock + push).');
+  L.push(' */');
+  L.push('');
+  L.push('/** @typedef {\'PARSE\'|\'PLAN\'|\'EXECUTE\'|\'VERIFY\'} SovereignStage */');
+  L.push("export type SovereignStage = 'PARSE' | 'PLAN' | 'EXECUTE' | 'VERIFY';");
+  L.push('');
+  L.push('export interface SovereignModule {');
+  L.push('  readonly id: string;');
+  L.push('  readonly name: string;');
+  L.push('  readonly responsibility: string;');
+  L.push('  readonly inputs: readonly string[];');
+  L.push('  readonly outputs: readonly string[];');
+  L.push('  readonly dependsOn: readonly string[];');
+  L.push('}');
+  L.push('');
+  L.push('export interface SovereignStep {');
+  L.push('  readonly order: number;');
+  L.push('  readonly stage: SovereignStage;');
+  L.push('  readonly moduleId: string;');
+  L.push('  readonly formal: string;');
+  L.push('  readonly constraints: readonly string[];');
+  L.push('}');
+  L.push('');
+  L.push('/** Provenance of this lock — consumed by the vault and the audit trail. */');
+  L.push('');
+  L.push('/**');
+  L.push(' * \u2550\u2550\u2550 OPERATOR LAYER — raw transcript accepted at INTENT receipt \u2550\u2550\u2550');
+  for (const c of blueprint.concepts) {
+    const flag = c.included ? '' : ' [excluded from scaffold]';
+    L.push(` * ${String(c.n).padStart(2, '0')} [${c.kind}] ${toCommentSafe(c.statement)}${flag}`);
+  }
+  if (blueprint.ambiguities.length > 0) {
+    L.push(' *');
+    for (const a of blueprint.ambiguities) L.push(` * NOTE: ${toCommentSafe(a)}`);
+  }
+  L.push(' * \u2550\u2550\u2550 end operator layer \u2550\u2550\u2550');
+  L.push(' */');
+  L.push('export const SOVEREIGN_TEMPLATE_META = {');
+  L.push("  generatedFrom: 'BRAIN_MODE_PHASE_3',");
+  L.push(`  conceptCount: ${blueprint.concepts.filter((c) => c.included).length},`);
+  L.push(`  moduleCount: ${modules.length},`);
+  L.push(`  constraintCount: ${totalConstraints},`);
+  L.push("  path: 'src/workspace/sovereignTemplate.ts',");
+  L.push('};');
+  L.push('');
+  L.push('/** @type {readonly SovereignModule[]} */');
+  L.push('export const CORE_MODULES = [');
+  for (const m of modules) {
+    L.push('  {');
+    L.push(`    id: ${tsLit(m.id)},`);
+    L.push(`    name: ${tsLit(m.name)},`);
+    L.push(`    responsibility: ${tsLit(m.responsibility)},`);
+    L.push(`    inputs: [${m.inputs.map(tsLit).join(', ')}],`);
+    L.push(`    outputs: [${m.outputs.map(tsLit).join(', ')}],`);
+    L.push(`    dependsOn: [${m.dependsOn.map(tsLit).join(', ')}],`);
+    L.push('  },');
+  }
+  L.push('];');
+  L.push('');
+  L.push('/** The meta-algorithm: ctx(k+1) = S(k)(ctx(k)), S(k) = <stage(module) | AND C(module)>. */');
+  L.push('/** @type {readonly SovereignStep[]} */');
+  L.push('export const META_ALGORITHM = [');
+  for (const st of steps) {
+    L.push('  {');
+    L.push(`    order: ${st.order},`);
+    L.push(`    stage: ${tsLit(st.stage)},`);
+    L.push(`    moduleId: ${tsLit(st.moduleId)},`);
+    L.push(`    formal: ${tsLit(st.formal)},`);
+    L.push(`    constraints: [${st.constraints.map(tsLit).join(', ')}],`);
+    L.push('  },');
+  }
+  L.push('];');
+  L.push('');
+  L.push('/** Concept ledger distilled from the operator notes (Layer 1). */');
+  L.push('export const BLUEPRINT_CONCEPTS = [');
+  for (const c of blueprint.concepts.filter((x) => x.included)) {
+    L.push(`  { n: ${c.n}, kind: ${tsLit(c.kind)}, statement: ${tsLit(c.statement)} },`);
+  }
+  L.push('];');
+  L.push('');
+  L.push('/**');
+  L.push(' * Resolve a module by id.');
+  L.push(' * @param {string} id');
+  L.push(' * @returns {SovereignModule|undefined}');
+  L.push(' */');
+  L.push('export function moduleById(id) {');
+  L.push('  return CORE_MODULES.find(function (m) { return m.id === id; });');
+  L.push('}');
+  L.push('');
+  L.push('/** @returns {readonly string[]} human-readable ordered step sequence */');
+  L.push('export function stepSequence() {');
+  L.push('  return META_ALGORITHM.map(function (s) { return \'[S\' + s.order + \'] \' + s.stage + \' :: \' + s.moduleId; });');
+  L.push('}');
+  L.push('');
+  L.push('/**');
+  L.push(' * Sandbox entrypoint — verifies the scaffold is internally consistent');
+  L.push(' * (every step resolves, every dependency exists, constraints landed).');
+  L.push(' * @returns {{ status: string, steps: number, constraints: number }}');
+  L.push(' */');
+  L.push('export function runTask() {');
+  L.push('  META_ALGORITHM.forEach(function (s) {');
+  L.push('    var mod = moduleById(s.moduleId);');
+  L.push('    if (!mod) { throw new TypeError(\'step \'+ s.order +\' references unknown module \' + s.moduleId); }');
+  L.push('    mod.dependsOn.forEach(function (dep) {');
+  L.push('      if (!moduleById(dep)) { throw new TypeError(\'module \' + mod.id + \' depends on missing \' + dep); }');
+  L.push('    });');
+  L.push('  });');
+  L.push('  if (META_ALGORITHM.length === 0) { throw new TypeError(\'empty meta-algorithm — re-run Layer 2\'); }');
+  L.push('  var constraints = META_ALGORITHM.reduce(function (n, s) { return n + s.constraints.length; }, 0);');
+  L.push('  if (constraints === 0) { throw new TypeError(\'scaffold has zero armed constraints — re-run Layer 3 logic injection\'); }');
+  L.push('  return { status: \'SCAFFOLD_ARMED\', steps: META_ALGORITHM.length, constraints: constraints };');
+  L.push('}');
+  L.push('');
+  return { steps, template: L.join('\n') };
 }

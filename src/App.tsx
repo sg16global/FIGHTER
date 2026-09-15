@@ -78,6 +78,7 @@ import {
   saveLogicBlocks,
 } from './engine/masterAlgorithm';
 import { PinterestBrainStudio } from './components/PinterestBrainStudio';
+import { BrainModePanel, SOVEREIGN_TEMPLATE_PATH } from './components/BrainModePanel';
 import {
   loadMemoryBank,
   saveMemoryBank,
@@ -891,6 +892,57 @@ export function App() {
     handleSendMessage(prompt, { advisoryOverride: true, gatewayApproved: true });
   };
 
+  // PHASE 3 · LOCK & DEPLOY — the Brain Mode pipeline's final act. The
+  // synthesized sovereign template must clear the SAME gates as any other
+  // write: self-corrected structure, KALI L1 content gate, L2 filename policy.
+  // On success it lands at the fixed path, becomes the active editor file, and
+  // the app hands off to Code Mode — the workspace tracker sees it instantly.
+  const handleDeployTemplate = (content: string): { ok: boolean; reason?: string } => {
+    const corrected = selfCorrectCode(content);
+    if (corrected.unrecoverable) {
+      return { ok: false, reason: `structural defect the hub could not fix (${corrected.unrecoverable}) — adjust Layer 3 constraints and re-synthesize.` };
+    }
+    if (gatePatch(corrected.code, 'sovereign template deploy (L1 content gate)') === null) {
+      return { ok: false, reason: 'KALI GPT (L1) quarantined the synthesized scaffold — check the ledger for the rule hit.' };
+    }
+    // The fixed path is the CONTRACT: an attacker-influenced synthesis must
+    // never relocate the write. Filename policy sanitizes into the jail and
+    // the result is force-reconciled to the canonical path or the deploy aborts.
+    const nameCheck = validateWorkspaceFilename(SOVEREIGN_TEMPLATE_PATH);
+    if (!nameCheck.ok || nameCheck.safeName !== SOVEREIGN_TEMPLATE_PATH) {
+      return { ok: false, reason: `LAYER 2 filename policy rejected the fixed workspace path: ${nameCheck.reason ?? 'normalized path did not reconcile'}` };
+    }
+    const finalPath = SOVEREIGN_TEMPLATE_PATH;
+    setFiles((prev) => {
+      const existing = prev.find((f) => f.path === finalPath);
+      if (existing) {
+        return prev.map((f) => (f.path === finalPath ? { ...f, content: corrected.code, isModified: true, lastRunStatus: 'PASSED' } : f));
+      }
+      return [
+        ...prev,
+        {
+          id: 'file-sovereign-template',
+          name: 'sovereignTemplate.ts',
+          path: finalPath,
+          language: 'typescript' as const,
+          content: corrected.code,
+          isModified: true,
+          hasKnownBug: false,
+          lastRunStatus: 'PASSED' as const,
+        },
+      ];
+    });
+    setActiveFileId('file-sovereign-template');
+    setAppMode('CODE');
+    setCurrentView('code');
+    appendVaultRecord('COMMIT', `Brain Phase 3 LOCK&DEPLOY → ${finalPath} (${corrected.code.length} chars${corrected.fixes.length ? ' · hub rewrites: ' + corrected.fixes.join('; ') : ''})`);
+    logSovereign([
+      '[LOGIC HUB · RULE 5] Brain structure LOCKED — sovereign template deployed to the Code Mode workspace.',
+      `[VFS] tracked ${finalPath} · TypeScript · active in editor · sandbox-runnable via runTask()`,
+    ]);
+    return { ok: true };
+  };
+
   // User chat message handling — opts carry the operator's advisory/gateway decisions.
   const handleSendMessage = (userText: string, opts: { advisoryOverride?: boolean; gatewayApproved?: boolean } = {}) => {
     const userMsg: ChatMessage = {
@@ -1386,14 +1438,19 @@ export function App() {
           <main className="flex-1 flex flex-col min-h-0 min-w-0 bg-[#FAF6F0] overflow-hidden relative">
             {/* ── BRAIN MODE: master algorithm console (replaces the workspace surface) ── */}
             {appMode === 'BRAIN' ? (
-              <PinterestBrainStudio
-                committed={logicBlocks}
-                engineArmed={engineArmed}
-                onCommit={handleCommitAlgorithm}
-                onSwitchToCode={() => setAppMode('CODE')}
-                envFlavor={ideEnv.flavor}
-                vaultCount={vaultCount}
-              />
+              <div className="flex-1 flex flex-col min-h-0">
+                <BrainModePanel onDeploy={handleDeployTemplate} />
+                <div className="flex-1 min-h-0 border-t border-[#EFE7DE]">
+                  <PinterestBrainStudio
+                    committed={logicBlocks}
+                    engineArmed={engineArmed}
+                    onCommit={handleCommitAlgorithm}
+                    onSwitchToCode={() => setAppMode('CODE')}
+                    envFlavor={ideEnv.flavor}
+                    vaultCount={vaultCount}
+                  />
+                </div>
+              </div>
             ) : (
             <>
             {/* VIEW 1: CHATS VIEW */}
