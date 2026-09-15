@@ -8,7 +8,6 @@ import {
   Download,
   Terminal,
   Layers,
-  Lock,
   Globe,
   Radio,
 } from 'lucide-react';

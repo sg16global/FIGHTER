@@ -1,14 +1,11 @@
 import React from 'react';
 import {
-  X,
-  Minimize2,
-  Maximize2,
   Globe,
   Radio,
   ShieldCheck,
   Layers,
   Settings,
-  Sparkles,
+  Cpu,
 } from 'lucide-react';
 import { RemoteApiStatus, MistralModelId, MISTRAL_MODELS } from '../engine/mistralClient';
 
@@ -101,6 +98,15 @@ export const PinterestHeader: React.FC<PinterestHeaderProps> = ({
 
       {/* Right: Remote Network & Security Indicators */}
       <div className="flex items-center space-x-2.5">
+        {/* Active Mistral analysis brain */}
+        <span
+          className="hidden md:flex items-center space-x-1 px-2 py-1 rounded-full bg-[#FFFFFF] border border-[#E8DFD5] text-[10px] font-mono text-[#57534E] shadow-2xs"
+          title={`${modelSpec.displayName} · analysis only — enforcement lives in the security kernel`}
+        >
+          <Cpu className="w-3 h-3 text-[#8B5CF6]" />
+          <span>{modelSpec.shortName}</span>
+        </span>
+
         {/* Double-Layer Shield Indicator */}
         <button
           onClick={onOpenArchitecture}

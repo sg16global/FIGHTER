@@ -15,7 +15,15 @@
 // - Exponential backoff retry logic & AbortController timeout handling
 // - Live health diagnostics & latency telemetry
 // - Seamless Online / Offline dual-mode operation
+//
+// SECURITY: every outbound request re-validates the endpoint through the
+// security kernel (validateRemoteEndpoint). UI-level checks are convenience;
+// THIS check is the authority — a tampered renderer still cannot exfiltrate
+// the bearer token to an unauthorized host, because this client refuses to
+// build the request at all.
 // ============================================================================
+
+import { validateRemoteEndpoint } from '../security/securityCore';
 
 export type MistralModelId =
   | 'open-mistral-7b'
@@ -147,7 +155,7 @@ export const DEFAULT_REMOTE_CONFIG: RemoteApiConfig = {
   topP: 0.95,
   maxTokens: 4096,
   timeoutMs: 45000,
-  safePrompt: false,
+  safePrompt: true, // Content-safety filter is pinned ON; a config cannot downgrade it
   autoFallbackToOffline: true,
 };
 
@@ -169,14 +177,6 @@ export function loadRemoteApiConfig(): RemoteApiConfig {
     // Fallback
   }
   return { ...DEFAULT_REMOTE_CONFIG };
-}
-
-export function saveRemoteApiConfig(config: RemoteApiConfig): void {
-  try {
-    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(config));
-  } catch {
-    // Storage fallback
-  }
 }
 
 export interface RemoteApiStatus {
@@ -241,6 +241,20 @@ export async function testRemoteMistralConnection(
       activeModel: modelId,
       availableModels: Object.keys(MISTRAL_MODELS),
       latencyMs: 0,
+      lastChecked: new Date().toLocaleTimeString(),
+    };
+  }
+
+  // Kernel pin: never probe (let alone send credentials to) an unsanctioned host.
+  const endpointVerdict = validateRemoteEndpoint(config.endpointUrl);
+  if (!endpointVerdict.ok) {
+    return {
+      status: 'error',
+      mode: 'online',
+      message: `Endpoint blocked by LAYER 1 network policy: ${endpointVerdict.reason}`,
+      activeEndpoint: config.endpointUrl,
+      activeModel: modelId,
+      availableModels: [],
       lastChecked: new Date().toLocaleTimeString(),
     };
   }
@@ -332,7 +346,6 @@ export async function generateRemoteMistralChat(options: {
 }): Promise<MistralChatResponse> {
   const started = performance.now();
   const { model, messages, config } = options;
-  const cleanBase = config.endpointUrl.replace(/\/+$/, '');
 
   // Check if running in offline mode or without API key
   if (config.mode === 'offline' || !config.apiKey.trim()) {
@@ -346,6 +359,20 @@ export async function generateRemoteMistralChat(options: {
       error: 'OFFLINE_MODE_ACTIVE',
     };
   }
+
+  // EGRESS PIN — enforced here, not just in the settings UI.
+  const pin = pinEgressEndpoint(config.endpointUrl);
+  if (!pin.ok) {
+    return {
+      ok: false,
+      text: '',
+      model,
+      latencyMs: Math.round(performance.now() - started),
+      error: `EGRESS DENIED BY SOVEREIGN SHIELD: ${pin.reason}`,
+      isOfflineFallback: config.autoFallbackToOffline,
+    };
+  }
+  const cleanBase = pin.cleanBase;
 
   const maxRetries = 2;
   let lastError = '';
@@ -364,7 +391,7 @@ export async function generateRemoteMistralChat(options: {
         temperature: options.temperature ?? config.temperature ?? 0.2,
         top_p: config.topP ?? 0.95,
         max_tokens: options.maxTokens ?? config.maxTokens ?? 4096,
-        safe_prompt: config.safePrompt ?? false,
+        safe_prompt: true, // PINNED: content-safety filter cannot be disabled from config/UI
         stream: false,
       };
 
@@ -459,7 +486,6 @@ export async function generateRemoteCodestralFim(options: {
 }): Promise<MistralChatResponse> {
   const started = performance.now();
   const { prompt, suffix, config } = options;
-  const cleanBase = config.endpointUrl.replace(/\/+$/, '');
 
   if (config.mode === 'offline' || !config.apiKey.trim()) {
     return {
@@ -471,6 +497,21 @@ export async function generateRemoteCodestralFim(options: {
       error: 'OFFLINE_MODE_ACTIVE',
     };
   }
+
+  // EGRESS PIN — same authority as the chat path; no token leaves for an
+  // unsanctioned host.
+  const fimPin = pinEgressEndpoint(config.endpointUrl);
+  if (!fimPin.ok) {
+    return {
+      ok: false,
+      text: '',
+      model: 'codestral-latest',
+      latencyMs: Math.round(performance.now() - started),
+      error: `EGRESS DENIED BY SOVEREIGN SHIELD: ${fimPin.reason}`,
+      isOfflineFallback: config.autoFallbackToOffline,
+    };
+  }
+  const cleanBase = fimPin.cleanBase;
 
   try {
     const controller = new AbortController();
@@ -557,4 +598,52 @@ export function buildMistralSystemPrompt(options: {
     '--- END FILE CONTEXT ---',
     'Instructions: Provide sharp, concise, production-ready code analysis or patches with clean explanations.',
   ].join('\n');
+}
+
+// ============================================================================
+// SOVEREIGN EGRESS PIN — the authority for every outbound Mistral request.
+// ----------------------------------------------------------------------------
+// The settings UI validates endpoints for operator feedback, but a tampered
+// renderer could bypass it. These guards sit inside the client, so an unsanctioned
+// host, plaintext transport, embedded credentials or a prohibited telemetry
+// domain never receives a bearer token — regardless of what the UI was told.
+// ============================================================================
+
+export interface EgressPin {
+  ok: boolean;
+  cleanBase: string;
+  reason?: string;
+}
+
+export function pinEgressEndpoint(endpointUrl: string): EgressPin {
+  const verdict = validateRemoteEndpoint(endpointUrl);
+  return {
+    ok: verdict.ok,
+    cleanBase: verdict.ok ? verdict.url : endpointUrl.replace(/\/+$/, ''),
+    reason: verdict.reason,
+  };
+}
+
+/**
+ * The kernel's endpoint policy is ALSO enforced on save: a config that points at
+ * an unsanctioned host is never persisted, so a reload can never resurrect a
+ * hostile gateway even if runtime checks were somehow skipped.
+ */
+export function saveRemoteApiConfig(config: RemoteApiConfig): void {
+  try {
+    const verdict = validateRemoteEndpoint(config.endpointUrl);
+    if (!verdict.ok) {
+      localStorage.setItem(
+        CONFIG_STORAGE_KEY,
+        JSON.stringify({ ...DEFAULT_REMOTE_CONFIG, mode: 'offline' as StudioOperationMode })
+      );
+      return;
+    }
+    localStorage.setItem(
+      CONFIG_STORAGE_KEY,
+      JSON.stringify({ ...config, endpointUrl: verdict.url })
+    );
+  } catch {
+    // Storage unavailable: offline config is the safe default
+  }
 }

@@ -3,6 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Sovereign Content Security Policy (mirrors electron/main.cjs header for the packaged run).
+      script-src keeps 'unsafe-eval' because the TERMINAL GPT sandbox engine compiles the reviewed
+      workspace payload inside a capability-less function realm; every other channel is locked:
+      no objects, no base hijacking, no forms, no framing, no exfiltration origins, sandboxed
+      workspace code cannot reach the network even if it tried.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://*.mistral.ai http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    />
     <title>Aegis AI Dev Studio // Mistral Sovereign Intelligence</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

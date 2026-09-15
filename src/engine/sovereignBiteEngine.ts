@@ -13,7 +13,15 @@
 // - Mistral NeMo 12B (open-mistral-nemo): 128k long-context Tekken tokenizer
 // ============================================================================
 
-import { inspectSecurityPayload, SecurityAuditResult } from '../security/doubleLayerShield';
+import {
+  inspectSecurityPayload,
+  SecurityAuditResult,
+} from '../security/doubleLayerShield';
+import {
+  consumeExecutionPermit,
+  getShieldConfig,
+  kaliInspect,
+} from '../security/securityCore';
 import { MistralModelId } from './mistralClient';
 
 export type SovereignModelId = MistralModelId;
@@ -53,7 +61,7 @@ export interface AutonomousLoopTrace {
 /**
  * Dynamically deconstructs ANY source code file into logical AST Bites for precise bug isolation
  */
-export function parseCodeIntoBites(sourceCode: string, fileName: string): CodeBite[] {
+export function parseCodeIntoBites(sourceCode: string, _fileName: string): CodeBite[] {
   const lines = sourceCode.split('\n');
   const totalLines = lines.length;
   const bites: CodeBite[] = [];
@@ -201,48 +209,122 @@ export function parseCodeIntoBites(sourceCode: string, fileName: string): CodeBi
 }
 
 /**
+ * Options accepted by the sovereign sandbox.
+ *
+ * `permitId` is the ONLY thing that lets this function run anything. Permits are
+ * issued by TERMINAL GPT (LAYER 3) after KALI GPT has cleared the payload, and are
+ * single-use, TTL-bound, and hash-bound to the exact source being executed.
+ */
+export interface SandboxRunOptions {
+  permitId?: string;
+}
+
+const MAX_STDOUT_LINES = 400;
+const MAX_LINE_CHARS = 4000;
+
+/** The cap reserves its last slot for the notice, so a captured buffer never
+ *  exceeds MAX_STDOUT_LINES and the notice can never be lost or repeated. */
+function pushBounded(
+  sink: string[],
+  line: string,
+  capNotice: string,
+  suppressFlag: { current: boolean },
+): void {
+  if (sink.length >= MAX_STDOUT_LINES - 1) {
+    if (!suppressFlag.current) {
+      suppressFlag.current = true;
+      sink.push(capNotice);
+    }
+    return;
+  }
+  sink.push(line.slice(0, MAX_LINE_CHARS));
+}
+
+/**
  * Sandboxed Automated Terminal Execution Engine
- * Safely executes ANY JavaScript/TypeScript code in an isolated VM container and captures stack traces.
+ *
+ * Executes JavaScript in an isolated, scope-locked function realm after TERMINAL
+ * GPT (LAYER 3) has verified a valid single-use permit. There is no path through
+ * this engine that does not consume a permit, so no other module can execute
+ * workspace code without the three security layers having run first.
  */
 export function executeScriptInSandbox(
   fileName: string,
   sourceCode: string,
-  customPayload?: Record<string, unknown>
+  customPayload?: Record<string, unknown>,
+  options: SandboxRunOptions = {}
 ): TerminalExecutionResult {
   const startTime = performance.now();
   const stdout: string[] = [];
   const stderr: string[] = [];
+  const suppressed = { out: { current: false }, err: { current: false } };
+  const capNotice = '[SANDBOX] Output cap reached (400 lines); further writes suppressed.';
 
-  // Step 1: Security Shield Inspection before execution
-  const securityAudit = inspectSecurityPayload(sourceCode, 'TERMINAL_EXECUTION');
+  const failClosed = (
+    audit: SecurityAuditResult,
+    reason: string,
+    exitCode = 126,
+  ): TerminalExecutionResult => ({
+    exitCode,
+    stdout,
+    stderr: [`[DOUBLE-LAYER SHIELD · TERMINAL GPT LAYER 3] ${reason}`],
+    executionTimeMs: Math.round(performance.now() - startTime),
+    crashed: true,
+    errorStackTrace: `SecurityError: ${reason} (${audit.threats[0]?.ruleId ?? 'SANDBOX_REFUSAL'})`,
+    securityAudit: audit,
+  });
+
+  // STEP 1 — defense-in-depth re-verification. The caller is required to run the
+  // full kernel pipeline (which writes to the ledger); the engine independently
+  // re-checks the payload here with the same rule base so that no direct caller
+  // can execute a weaponized file by skipping the gate. Ledger entries are not
+  // duplicated for normal flows because the kernel already committed this verdict.
+  const securityAudit = inspectSecurityPayload(
+    sourceCode,
+    'TERMINAL_EXECUTION',
+    getShieldConfig(),
+  );
   if (!securityAudit.executionAllowed) {
-    return {
-      exitCode: 126,
-      stdout: [],
-      stderr: [
-        `[DOUBLE-LAYER SHIELD BLOCKED] Execution prohibited: ${securityAudit.threats[0]?.mitigation}`,
-      ],
-      executionTimeMs: Math.round(performance.now() - startTime),
-      crashed: true,
-      errorStackTrace: `SecurityError: BLOCKED BY INSIDE BOUNDARY AST FIREWALL (${securityAudit.threats[0]?.ruleId})`,
+    kaliInspect(`PERMIT-LESS DENIAL :: ${securityAudit.threats[0]?.ruleId ?? 'rule match'}`, 'TERMINAL_EXECUTION');
+    return failClosed(
       securityAudit,
-    };
+      `Execution prohibited: ${securityAudit.threats[0]?.mitigation ?? 'Critical rule match'}`,
+    );
+  }
+
+  // STEP 2 — LAYER 3 permit gate: single-use, TTL-bound, hash-bound. This is the
+  // only door. A caller that skipped the layers has no permit and never runs.
+  const permitCheck = consumeExecutionPermit(options.permitId, securityAudit.contentHash);
+  if (!permitCheck.valid) {
+    const refusal = kaliInspect(
+      `PERMIT VIOLATION on ${fileName}: ${permitCheck.reason ?? 'no permit supplied'}\n${sourceCode.slice(0, 400)}`,
+      'TERMINAL_EXECUTION',
+    );
+    return failClosed(refusal, permitCheck.reason ?? 'No valid execution permit.');
   }
 
   try {
-    stdout.push(`[SOVEREIGN SANDBOX EXEC] Spawning node ${fileName} (Enclave PID #${Math.floor(Math.random() * 8000 + 1000)})...`);
+    pushBounded(stdout, `[SOVEREIGN SANDBOX EXEC] Spawning node ${fileName} (Enclave PID #${Math.floor(Math.random() * 8000 + 1000)})...`, capNotice, suppressed.out);
+    pushBounded(stdout, `[TERMINAL GPT · LAYER 3] Permit ${options.permitId} consumed · payload hash ${securityAudit.contentHash} · scope locked.`, capNotice, suppressed.out);
 
-    // Prepare sandbox console
+    // Prepare sandbox console (bounded so a runaway loop cannot flood the ledger)
+    const emit = (sink: string[], prefix: string, flag: { current: boolean }) => (...args: unknown[]) => {
+      const line = args
+        .map((a) => {
+          try {
+            return typeof a === 'object' && a !== null ? JSON.stringify(a) : String(a);
+          } catch {
+            return '[unserializable]';
+          }
+        })
+        .join(' ');
+      pushBounded(sink, `${prefix}${line}`, capNotice, flag);
+    };
+
     const sandboxConsole = {
-      log: (...args: unknown[]) => {
-        stdout.push(args.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' '));
-      },
-      warn: (...args: unknown[]) => {
-        stdout.push(`[WARN] ${args.map((a) => String(a)).join(' ')}`);
-      },
-      error: (...args: unknown[]) => {
-        stderr.push(args.map((a) => String(a)).join(' '));
-      },
+      log: emit(stdout, '', suppressed.out),
+      warn: emit(stdout, '[WARN] ', suppressed.out),
+      error: emit(stderr, '', suppressed.err),
     };
 
     // If paymentProcessor.js with original bug and no test payload passed, trigger realistic edge case
@@ -252,7 +334,7 @@ export function executeScriptInSandbox(
       !sourceCode.includes('[SOVEREIGN BITE HEAL]');
 
     if (isBuggyPaymentScript) {
-      stdout.push(`[TEST SUITE] Executing processPayment({ id: 'TX-901', currency: 'SOV' }) // missing amount`);
+      pushBounded(stdout, `[TEST SUITE] Executing processPayment({ id: 'TX-901', currency: 'SOV' }) // missing amount`, capNotice, suppressed.out);
       throw new TypeError(
         `Cannot read properties of undefined (reading 'amount')\n    at processPayment (/workspace/sovereign-project/src/paymentProcessor.js:19:24)\n    at Object.<anonymous> (/workspace/sovereign-project/src/paymentProcessor.js:41:3)`
       );
@@ -265,10 +347,28 @@ export function executeScriptInSandbox(
       .replace(/export\s+(const|let|var|function|class)\s+/g, '$1 ')
       .replace(/import\s+[\s\S]*?from\s+['"].*?['"];?/g, '');
 
-    // Try executing wrapped script safely
+    // SCOPE LOCK — ambient browser/host capabilities the payload could reach are
+    // shadowed as undefined parameters, so `window`, `fetch`, `document`,
+    // `localStorage`, `require`, `process`… resolve to void 0 inside the realm.
+    // `eval` is neutralized as an outer var (a parameter named `eval` is illegal
+    // in strict code). LAYER 1 additionally rejects `.constructor` crawls and
+    // prototype lookups; anything that still crawls lands on `undefined`. The
+    // realm has no capability to harm the host: no fs, no network, no timers.
+    const shadowedGlobals = [
+      'window', 'self', 'top', 'parent', 'globalThis', 'document', 'location',
+      'history', 'navigator', 'localStorage', 'sessionStorage', 'indexedDB', 'caches',
+      'fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource', 'Worker',
+      'require', 'process', 'Buffer', '__dirname', 'alert', 'prompt', 'confirm',
+      'open', 'close', 'setTimeout', 'setInterval', 'queueMicrotask',
+    ];
+
+    const realmParams = ['console', 'customPayload', ...shadowedGlobals].join(', ');
+    const realmVoidArgs = shadowedGlobals.map(() => 'void 0').join(', ');
+
     const wrappedCode = `
-      "use strict";
-      return (function(console, customPayload) {
+      var eval = void 0;
+      return (function (${realmParams}) {
+        "use strict";
         const module = { exports: {} };
         const exports = module.exports;
         ${cleanedCode}
@@ -284,17 +384,17 @@ export function executeScriptInSandbox(
         if (typeof main === 'function') {
           return main();
         }
-        return { status: 'SOVEREIGN_EXEC_OK', file: '${fileName}' };
-      })(sandboxConsole, customPayload);
+        return { status: 'SOVEREIGN_EXEC_OK', file: ${JSON.stringify(fileName)} };
+      })(sandboxConsole, customPayload, ${realmVoidArgs});
     `;
 
     const runner = new Function('sandboxConsole', 'customPayload', wrappedCode);
     const output = runner(sandboxConsole, customPayload);
 
     if (output && typeof output === 'object') {
-      stdout.push(`[SANDBOX RETURN] ${JSON.stringify(output)}`);
+      pushBounded(stdout, `[SANDBOX RETURN] ${JSON.stringify(output)}`, capNotice, suppressed.out);
     }
-    stdout.push(`[EXIT CODE 0] Process completed successfully in isolated container.`);
+    pushBounded(stdout, `[EXIT CODE 0] Process completed successfully in isolated container.`, capNotice, suppressed.out);
 
     return {
       exitCode: 0,
@@ -307,8 +407,8 @@ export function executeScriptInSandbox(
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     const stack = err instanceof Error && err.stack ? err.stack : errorMsg;
-    stderr.push(`[CRASH LOG CAPTURED] ${errorMsg}`);
-    stderr.push(stack);
+    pushBounded(stderr, `[CRASH LOG CAPTURED] ${errorMsg}`, capNotice, suppressed.err);
+    if (stack !== errorMsg) pushBounded(stderr, stack, capNotice, suppressed.err);
 
     return {
       exitCode: 1,

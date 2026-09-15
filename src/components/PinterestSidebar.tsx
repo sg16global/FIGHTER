@@ -6,12 +6,9 @@ import {
   MessageSquare,
   FolderKanban,
   CheckSquare,
-  Bot,
-  Building2,
+  ShieldHalf,
   ChevronDown,
   Download,
-  Trash2,
-  Sparkles,
   FileCode,
 } from 'lucide-react';
 import { WorkspaceFile } from '../workspace/defaultFiles';
@@ -111,7 +108,7 @@ export const PinterestSidebar: React.FC<PinterestSidebarProps> = ({
     { key: 'chats' as const, label: 'Chats', icon: MessageSquare },
     { key: 'colab' as const, label: 'Projects', icon: FolderKanban },
     { key: 'tasks' as const, label: 'Tasks', icon: CheckSquare },
-    { key: 'agents' as const, label: 'Agents', icon: Bot },
+    { key: 'agents' as const, label: 'Security Layers', icon: ShieldHalf },
     { key: 'code' as const, label: 'Code Studio', icon: FileCode },
   ];
 
@@ -182,6 +179,73 @@ export const PinterestSidebar: React.FC<PinterestSidebarProps> = ({
               </button>
             );
           })}
+        </div>
+
+        <div className="h-px bg-[#EFE7DE] my-2" />
+
+        {/* BACKEND SECURITY LAYERS — chat console selector (these are enforcement
+            layers, not conversational agents; picking one opens its verdict
+            console, it does not change a model's persona) */}
+        <div>
+          <div className="px-3 py-1 flex items-center justify-between">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-[#A8A29E]">
+              Security Layers
+            </span>
+            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-[#E8F8F5] text-[#0F766E] border border-[#A3E4D7]">
+              {MISTRAL_MODELS[activeModel].shortName}
+            </span>
+          </div>
+          <div className="space-y-0.5 mt-1">
+            {Object.values(AGENTS).map((agent) => {
+              const isActiveLayer = agent.id === activeAgent;
+              return (
+                <button
+                  key={agent.id}
+                  onClick={() => onSelectAgent(agent.id)}
+                  className={`w-full text-left px-3 py-1.5 rounded-xl flex items-center space-x-2 transition-all ${
+                    isActiveLayer
+                      ? 'bg-[#FFFFFF] border border-[#E8DFD5] shadow-xs'
+                      : 'hover:bg-[#F2ECE3] border border-transparent'
+                  }`}
+                  title={agent.tagline}
+                >
+                  <span
+                    className="w-1.5 h-1.5 rounded-full shrink-0"
+                    style={{ backgroundColor: agent.accent }}
+                  />
+                  <span className="text-xs font-medium text-[#1C1917]">{agent.name}</span>
+                  <span className="ml-auto text-[9px] font-mono text-[#A8A29E]">
+                    L{agent.layer}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="h-px bg-[#EFE7DE] my-2" />
+
+        {/* SANDBOX FILES — read-only listing; select to open in Code Studio */}
+        <div>
+          <div className="px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-[#A8A29E]">
+            Sandbox Files
+          </div>
+          <div className="space-y-0.5 mt-1 max-h-[132px] overflow-y-auto pr-1">
+            {files.map((f) => (
+              <button
+                key={f.id}
+                onClick={() => onSelectFile(f.id)}
+                className={`w-full text-left px-3 py-1 rounded-lg text-[11px] font-mono truncate transition-colors ${
+                  f.id === activeFileId
+                    ? 'bg-[#EFE7DC] text-[#1C1917] font-semibold'
+                    : 'text-[#78716C] hover:bg-[#F2ECE3] hover:text-[#1C1917]'
+                }`}
+                title={f.path}
+              >
+                {f.path}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="h-px bg-[#EFE7DE] my-2" />

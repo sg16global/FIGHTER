@@ -5,3 +5,6 @@
 # GitHub blocks files over 100MB — restore with: npm install
 node_modules/electron/dist/electron.exe
 release/win-unpacked/Aegis AI Dev Studio.exe
+
+# security self-test build output
+.sec-selftest/

@@ -8,8 +8,6 @@ import {
   FileCode,
   RotateCcw,
   Plus,
-  Bug,
-  ShieldCheck,
 } from 'lucide-react';
 import { WorkspaceFile } from '../workspace/defaultFiles';
 import { MistralModelId, MISTRAL_MODELS } from '../engine/mistralClient';
@@ -106,6 +104,13 @@ export const PinterestCodeStudio: React.FC<PinterestCodeStudioProps> = ({
 
           {/* Action Buttons */}
           <div className="flex items-center space-x-2">
+            <span
+              className="hidden lg:flex items-center px-2 py-1 rounded-lg bg-[#FAF6F0] border border-[#E8DFD5] text-[10px] font-mono text-[#57534E]"
+              title={`${modelSpec.displayName} · patches are re-inspected by KALI GPT before applying`}
+            >
+              {modelSpec.shortName}
+            </span>
+
             <button
               onClick={() => setShowDiff(!showDiff)}
               className={`flex items-center space-x-1 px-3 py-1.5 rounded-xl text-xs font-medium transition-all ${

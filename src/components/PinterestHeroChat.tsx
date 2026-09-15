@@ -10,12 +10,8 @@ import {
   FileText,
   Zap,
   Sparkles,
-  Search,
   Check,
   Shield,
-  Bot,
-  Play,
-  RotateCcw,
 } from 'lucide-react';
 import { MistralModelId, MISTRAL_MODELS } from '../engine/mistralClient';
 import { AgentId, AGENTS } from '../agents/agents';
@@ -133,6 +129,40 @@ export const PinterestHeroChat: React.FC<PinterestHeroChatProps> = ({
         <h1 className="text-3xl md:text-4xl font-heading font-semibold text-[#1C1917] tracking-tight text-center">
           {getGreeting()}
         </h1>
+
+        {/* Backend security layer console selector + shield strip */}
+        <div className="w-full flex flex-col items-center space-y-2">
+          <div className="flex items-center p-1 rounded-full bg-[#EFE8DE] border border-[#E4DBD0] shadow-2xs">
+            {Object.values(AGENTS).map((agent) => {
+              const isActive = agent.id === activeAgent;
+              return (
+                <button
+                  key={agent.id}
+                  type="button"
+                  onClick={() => onSelectAgent(agent.id)}
+                  className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all flex items-center space-x-1.5 ${
+                    isActive ? 'bg-[#FFFFFF] shadow-xs text-[#1C1917] font-semibold' : 'text-[#78716C] hover:text-[#1C1917]'
+                  }`}
+                  style={isActive ? { color: agent.accent } : undefined}
+                  title={agent.tagline}
+                >
+                  <span
+                    className="w-1.5 h-1.5 rounded-full"
+                    style={{ backgroundColor: agent.accent }}
+                  />
+                  <span>L{agent.layer} · {agent.name}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center space-x-1.5 text-[10px] font-mono text-[#8C827A]">
+            <Shield className="w-3 h-3 text-[#0D9488]" />
+            <span>
+              Prompts &amp; model output are inspected by KALI GPT · commands sanitized by SHELL
+              GPT · execution permit-gated by TERMINAL GPT
+            </span>
+          </div>
+        </div>
 
         {/* Central Floating White Chat Input Card */}
         <div className="w-full pinterest-hero-box p-4 flex flex-col space-y-3 bg-[#FFFFFF] relative">

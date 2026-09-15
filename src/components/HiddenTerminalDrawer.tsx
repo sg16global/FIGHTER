@@ -1,18 +1,15 @@
 import React, { useState } from 'react';
 import {
   Terminal as TerminalIcon,
-  X,
   ChevronUp,
   ChevronDown,
-  ShieldCheck,
-  Sparkles,
-  Layers,
-  RotateCcw,
+  Zap,
   AlertOctagon,
   CheckCircle2,
 } from 'lucide-react';
 import { TerminalExecutionResult, AutonomousLoopTrace, CodeBite } from '../engine/sovereignBiteEngine';
 import { SecurityAuditResult } from '../security/doubleLayerShield';
+import { getShieldTelemetry, verifyShieldIntegrity } from '../security/securityCore';
 
 interface HiddenTerminalDrawerProps {
   terminalLogs: string[];
@@ -38,6 +35,8 @@ export const HiddenTerminalDrawer: React.FC<HiddenTerminalDrawerProps> = ({
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'OUTPUT' | 'TRACES' | 'SHIELD' | 'BITES'>('OUTPUT');
   const [customCmd, setCustomCmd] = useState('');
+  const [integrity, setIntegrity] = useState(() => verifyShieldIntegrity());
+  const telemetry = getShieldTelemetry();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -176,21 +175,84 @@ export const HiddenTerminalDrawer: React.FC<HiddenTerminalDrawerProps> = ({
 
             {activeTab === 'SHIELD' && (
               <div className="space-y-2">
+                {/* Backend security layers — live posture, not decoration */}
+                <div
+                  className={`p-2.5 rounded-xl border text-xs flex items-start justify-between gap-3 ${
+                    integrity.intact
+                      ? 'bg-[#F0FBF8] border-[#A3E4D7]'
+                      : 'bg-[#FDEDEC] border-[#F5B7B1]'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center space-x-1.5 font-semibold text-[#1C1917]">
+                      {integrity.intact ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-[#0D9488] shrink-0" />
+                      ) : (
+                        <AlertOctagon className="w-3.5 h-3.5 text-[#B91C1C] shrink-0" />
+                      )}
+                      <span>
+                        KALI · SHELL · TERMINAL layers ACTIVE — LAYER 1 ledger{' '}
+                        {integrity.intact ? 'verified' : 'FAULT'}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[11px] text-[#57534E] font-mono">
+                      entries {integrity.entries} · head {integrity.headHash} · denials{' '}
+                      {integrity.blockedCount} · contained {integrity.containedCount} · permits{' '}
+                      {telemetry.permitsIssued} · AST bites {bites.length}
+                    </p>
+                    {integrity.intact ? (
+                      <p className="mt-0.5 text-[11px] text-[#0F766E]">
+                        Every entry is hash-chained to its predecessor — a bypassed check or a rewritten
+                        record breaks this seal.
+                      </p>
+                    ) : (
+                      <p className="mt-0.5 text-[11px] text-[#B91C1C]">{integrity.reason}</p>
+                    )}
+                  </div>
+
+                  <div className="shrink-0 flex flex-col items-end gap-1.5">
+                    <button
+                      onClick={() => setIntegrity(verifyShieldIntegrity())}
+                      className="px-2.5 py-1 rounded-lg bg-[#FFFFFF] border border-[#E0D7CC] text-[11px] font-semibold text-[#1C1917] hover:bg-[#F2ECE3] transition-colors"
+                    >
+                      Re-verify chain
+                    </button>
+                    <button
+                      onClick={onTriggerAutoHeal}
+                      disabled={isHealingLoopRunning}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#E07A5F] disabled:opacity-50 text-[11px] font-semibold text-[#FFFFFF] hover:bg-[#C9664B] transition-colors"
+                      title="TERMINAL GPT supervises each run with its own single-use permit"
+                    >
+                      <Zap className="w-3 h-3" />
+                      {isHealingLoopRunning ? 'Healing…' : 'Auto-Heal'}
+                    </button>
+                  </div>
+                </div>
+
                 {securityAudits.map((audit) => (
                   <div
                     key={audit.id}
                     className={`p-2 rounded-xl border text-xs ${
                       audit.verdict === 'BLOCKED_SYSCALL'
                         ? 'bg-[#FEF2F2] border-[#FCA5A5]'
+                        : audit.verdict === 'SANDBOX_CONTAINED'
+                        ? 'bg-[#FFF9E6] border-[#F9E79F]'
                         : 'bg-[#FFFFFF] border-[#EFE7DE]'
                     }`}
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-semibold text-[#1C1917]">{audit.id}</span>
+                      <span className="font-semibold text-[#1C1917]">
+                        {audit.id}
+                        <span className="ml-2 font-normal text-[#A8A29E] font-mono text-[10px]">
+                          {audit.source} · hash {audit.contentHash}
+                        </span>
+                      </span>
                       <span
                         className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
                           audit.verdict === 'BLOCKED_SYSCALL'
                             ? 'bg-[#EF4444]/20 text-[#B91C1C]'
+                            : audit.verdict === 'SANDBOX_CONTAINED'
+                            ? 'bg-[#D97706]/15 text-[#B45309]'
                             : 'bg-[#10B981]/20 text-[#047857]'
                         }`}
                       >
@@ -198,6 +260,15 @@ export const HiddenTerminalDrawer: React.FC<HiddenTerminalDrawerProps> = ({
                       </span>
                     </div>
                     <p className="text-[11px] text-[#57534E] mt-1">{audit.notes}</p>
+                    {audit.threats.length > 0 && (
+                      <ul className="mt-1 space-y-0.5">
+                        {audit.threats.map((t) => (
+                          <li key={t.ruleId} className="text-[10px] font-mono text-[#7C2D12]">
+                            ▸ {t.ruleId} · {t.category} · {t.severity}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                 ))}
               </div>

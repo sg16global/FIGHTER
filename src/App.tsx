@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, Fragment } from 'react';
+import { ChevronRight, ShieldCheck } from 'lucide-react';
 import { PinterestHeader } from './components/PinterestHeader';
 import { PinterestSidebar, RecentChatItem, INITIAL_RECENTS } from './components/PinterestSidebar';
 import { PinterestHeroChat } from './components/PinterestHeroChat';
@@ -26,12 +27,20 @@ import {
   parseCodeIntoBites,
   TerminalExecutionResult,
 } from './engine/sovereignBiteEngine';
+import type { SecurityAuditResult } from './security/doubleLayerShield';
 import {
-  DEFAULT_SHIELD_CONFIG,
-  inspectSecurityPayload,
-  SecurityAuditResult,
-  ShieldConfig,
-} from './security/doubleLayerShield';
+  kaliInspect,
+  kaliGateModelOutput,
+  terminalAuthorizeRun,
+  shellSanitizeCommand,
+  validateWorkspaceFilename,
+  validateRemoteEndpoint,
+  ALLOWED_SHELL_VERBS,
+  getShieldLedger,
+  getShieldTelemetry,
+  subscribeShieldLedger,
+  verifyShieldIntegrity,
+} from './security/securityCore';
 import {
   MistralModelId,
   MISTRAL_MODELS,
@@ -80,8 +89,8 @@ export function App() {
     availableModels: Object.keys(MISTRAL_MODELS),
   });
 
-  const [shieldConfig, setShieldConfig] = useState<ShieldConfig>(DEFAULT_SHIELD_CONFIG);
-  const [memoryBankStatus, setMemoryBankStatus] = useState<string>('LTMB initializing...');
+  // Shield configuration and policy live exclusively inside the security kernel
+  // (src/security/securityCore.ts). No component can loosen them directly.
 
   // Modals
   const [architectureModalOpen, setArchitectureModalOpen] = useState(false);
@@ -91,27 +100,48 @@ export function App() {
   // Background Terminal & Execution state (kept in background by default)
   const [terminalLogs, setTerminalLogs] = useState<string[]>([
     '$ [AEGIS SOVEREIGN DEV STUDIO v3.4.0 INITIALIZED]',
-    '$ Mistral Suite: Codestral 22B · Mistral Large 2 · Mistral 7B · Mistral NeMo 12B',
-    '$ Double-Layer Security Shield: Sandbox Jail + AST Syscall Firewall Active',
+    '$ MISTRAL SUITE (ANALYSIS ONLY): Codestral 22B · Mistral Large 2 · Mistral 7B · Mistral NeMo 12B',
+    '$ ┌─ BACKEND SECURITY LAYERS (NOT chat agents — enforcement kernel) ─────────',
+    '$ │ LAYER 1 KALI GPT      REDSHIELD-01 · rule-base inspection · hash-chained audit ledger',
+    '$ │ LAYER 2 SHELL GPT     SHELLWEAVER-02 · command tokenization · strict-argv allowlist',
+    '$ │ LAYER 3 TERMINAL GPT  AUTORUN-03 · single-use hash-bound permits · scope-locked sandbox',
+    '$ └─ Every chat, editor, patch and terminal action is chained through all three.',
     '$ Studio front-end running in clean Pinterest design system.',
   ]);
 
   const [lastExecutionResult, setLastExecutionResult] = useState<TerminalExecutionResult | null>(null);
   const [autoHealTraces, setAutoHealTraces] = useState<AutonomousLoopTrace[]>([]);
   const [isHealingLoopRunning, setIsHealingLoopRunning] = useState<boolean>(false);
-  const [securityAudits, setSecurityAudits] = useState<SecurityAuditResult[]>([
-    {
-      id: 'AUDIT-INIT-001',
-      timestamp: '09:00:12',
-      verdict: 'SAFE',
-      inputSnippet: 'Mount virtual filesystem /workspace/sovereign-project/',
-      source: 'FILE_WRITE',
-      sandboxJailPath: '/workspace/sovereign-project',
-      threats: [],
-      executionAllowed: true,
-      notes: 'Outside Sandbox Jail boundary locked & verified.',
-    },
-  ]);
+
+  // Security audit trail is a projection of the kernel's hash-chained ledger.
+  // The ledger is the source of truth: KALI GPT (Layer 1) appends to it on
+  // every inspection, and this component never fabricates audit entries.
+  const [securityAudits, setSecurityAudits] = useState<SecurityAuditResult[]>(
+    () => getShieldLedger().map((entry) => entry.audit).reverse()
+  );
+
+  // Live posture recomputed whenever the kernel ledger commits — the UI renders
+  // the security layers' REAL state, never a decorative copy.
+  const [shieldPosture, setShieldPosture] = useState(() => ({
+    integrity: verifyShieldIntegrity(),
+    telemetry: getShieldTelemetry(),
+  }));
+
+  useEffect(
+    () =>
+      subscribeShieldLedger(() => {
+        setSecurityAudits(getShieldLedger().map((entry) => entry.audit).reverse());
+        setShieldPosture({ integrity: verifyShieldIntegrity(), telemetry: getShieldTelemetry() });
+      }),
+    []
+  );
+
+  const shieldIntegrity = shieldPosture.integrity;
+  const terminalPermitIssued = shieldPosture.telemetry.permitsIssued;
+
+  const logSovereign = useCallback((lines: string[]) => {
+    setTerminalLogs((prev) => [...prev, ...lines].slice(-600));
+  }, []);
 
   // Messages list (starts empty so user sees the hero Pinterest welcome screen)
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -133,9 +163,8 @@ export function App() {
         messages,
       });
       saveMemoryBank(snapshot);
-      setMemoryBankStatus(getMemorySummary());
     } catch {
-      // Ignore
+      // Memory bank must never break the security path.
     }
   }, [files, activeFile.path, terminalLogs, lastExecutionResult, autoHealTraces, securityAudits, messages]);
 
@@ -143,16 +172,15 @@ export function App() {
   useEffect(() => {
     try {
       const bank = loadMemoryBank();
-      setMemoryBankStatus(getMemorySummary());
       if (bank.snapshots && bank.snapshots.length > 0) {
         const latest = bank.snapshots[bank.snapshots.length - 1];
         setTerminalLogs((prev) => [
           ...prev,
-          `$ [LTMB RESTORE] Restored ${latest.fileFingerprints.length} workspace files from previous session.`,
+          `$ [LTMB RESTORE] Restored ${latest.fileFingerprints.length} workspace files from previous session. ${getMemorySummary()}`,
         ]);
       }
     } catch {
-      setMemoryBankStatus('LTMB ready');
+      setTerminalLogs((prev) => [...prev, '$ [LTMB] Memory bank ready.']);
     }
   }, []);
 
@@ -168,7 +196,30 @@ export function App() {
     return () => window.clearInterval(interval);
   }, [probeRemoteConnection]);
 
+  // Settings writes pass the kernel's endpoint policy. An attacker with access
+  // to the UI cannot repoint the client at their own gateway, smuggle
+  // credentials in the URL, downgrade to plaintext, or reach a prohibited
+  // telemetry host — the config is rejected before it is ever persisted.
   const handleUpdateRemoteConfig = (newConfig: RemoteApiConfig) => {
+    const onlineIntent = newConfig.mode === 'online' && newConfig.apiKey.trim().length > 0;
+    if (onlineIntent) {
+      const verdict = validateRemoteEndpoint(newConfig.endpointUrl);
+      if (!verdict.ok) {
+        logSovereign([
+          `[KALI GPT · LAYER 1] REMOTE GATEWAY POLICY VIOLATION: ${verdict.reason}`,
+          '[KALI GPT · LAYER 1] Configuration NOT saved. Forced Airgapped Offline mode remains active.',
+        ]);
+        const safeConfig: RemoteApiConfig = { ...newConfig, mode: 'offline' };
+        setRemoteConfig(safeConfig);
+        saveRemoteApiConfig(safeConfig);
+        return;
+      }
+      const sanitized = { ...newConfig, endpointUrl: verdict.url };
+      setRemoteConfig(sanitized);
+      saveRemoteApiConfig(sanitized);
+      logSovereign([`$ [CONFIG] Remote mode set to ${sanitized.mode.toUpperCase()} · endpoint pinned to ${sanitized.endpointUrl}`]);
+      return;
+    }
     setRemoteConfig(newConfig);
     saveRemoteApiConfig(newConfig);
     setTerminalLogs((prev) => [
@@ -208,7 +259,40 @@ export function App() {
     ]);
   };
 
+  // --------------------------------------------------------------------------
+  // LAYER 1 boundary · workspace write policy.
+  // Editor text is scanned on every commit. Jail-traversal or guardrail-override
+  // content is REJECTED (never written); destructive literals that live inside
+  // inert documentation files are allowed to exist but are denied the moment
+  // they try to execute at the LAYER 3 door.
+  // --------------------------------------------------------------------------
+  const adjudicateWorkspaceWrite = (
+    newContent: string,
+    reason: string,
+  ): { accepted: boolean } => {
+    const audit = kaliInspect(newContent, 'FILE_WRITE');
+    const deny = audit.threats.some(
+      (t) => t.severity === 'CRITICAL' && t.category === 'JAILBREAK_ATTEMPT',
+    );
+    if (deny) {
+      logSovereign([
+        `[KALI GPT · LAYER 1] REJECTED ${reason}: ${audit.threats.find((t) => t.category === 'JAILBREAK_ATTEMPT' && t.severity === 'CRITICAL')?.mitigation ?? 'Jail traversal attempt'}`,
+        `[KALI GPT · LAYER 1] Content was NOT written to the workspace. Ledger entry #${audit.ledgerSeq}.`,
+      ]);
+      return { accepted: false };
+    }
+    if (audit.threats.length > 0) {
+      logSovereign([
+        `[KALI GPT · LAYER 1] NOTE ${reason}: ${audit.threats.length} contained finding(s) recorded (ledger #${audit.ledgerSeq}); execution of this payload will be blocked at LAYER 3.`,
+      ]);
+    }
+    return { accepted: true };
+  };
+
   const handleCodeChange = (newContent: string) => {
+    if (!adjudicateWorkspaceWrite(newContent, `editor write on ${activeFile.path}`).accepted) {
+      return;
+    }
     setFiles((prev) =>
       prev.map((f) =>
         f.id === activeFile.id
@@ -225,26 +309,24 @@ export function App() {
   };
 
   const handleCreateNewFile = (name: string) => {
+    const validated = validateWorkspaceFilename(name);
+    if (!validated.ok) {
+      logSovereign([`[SHELL GPT · LAYER 2] FILE CREATE REFUSED: ${validated.reason}`]);
+      return;
+    }
+    const safePath = validated.safeName;
+    const displayName = safePath.split('/').pop() || safePath;
     const newId = `file-${Date.now().toString(36)}`;
     const newFile: WorkspaceFile = {
       id: newId,
-      name: name.split('/').pop() || name,
-      path: name.startsWith('src/') ? name : `src/${name}`,
-      language: name.endsWith('.ts') ? 'typescript' : 'javascript',
-      content: `/**\n * ${name}\n * Mistral Enclave Module\n */\n\nfunction runTask() {\n  return { status: 'OK', model: '${MISTRAL_MODELS[activeModel].shortName}' };\n}\n\nmodule.exports = { runTask };\n`,
+      name: displayName,
+      path: safePath,
+      language: safePath.endsWith('.ts') ? 'typescript' : 'javascript',
+      content: `/**\n * ${safePath}\n * Mistral Enclave Module — confined to /workspace/sovereign-project\n */\n\nfunction runTask() {\n  return { status: 'OK', model: '${MISTRAL_MODELS[activeModel].shortName}' };\n}\n\nmodule.exports = { runTask };\n`,
       hasKnownBug: false,
     };
     setFiles((prev) => [...prev, newFile]);
     setActiveFileId(newId);
-  };
-
-  const handleDeleteFile = (fileId: string) => {
-    if (files.length <= 1) return;
-    const remaining = files.filter((f) => f.id !== fileId);
-    setFiles(remaining);
-    if (activeFileId === fileId) {
-      setActiveFileId(remaining[0].id);
-    }
   };
 
   const handleResetSampleBug = () => {
@@ -268,6 +350,23 @@ export function App() {
     ]);
   };
 
+  // --------------------------------------------------------------------------
+  // LAYER 1 gate for synthesized patches: a healed bite (local heuristic OR a
+  // remote Codestral reply) is treated as untrusted input before it may touch
+  // the editor.
+  // --------------------------------------------------------------------------
+  const gatePatch = (patchSource: string, label: string): string | null => {
+    const gate = kaliGateModelOutput(patchSource);
+    if (!gate.allowed) {
+      logSovereign([
+        `[KALI GPT · LAYER 1] QUARANTINED ${label}: ${gate.audit.threats[0]?.mitigation ?? 'Critical finding in synthesized patch'}`,
+        `[KALI GPT · LAYER 1] Editor NOT patched. Ledger entry #${gate.audit.ledgerSeq}.`,
+      ]);
+      return null;
+    }
+    return patchSource;
+  };
+
   const handleApplyBiteToEditor = (bite: CodeBite) => {
     const currentLines = activeFile.content.split('\n');
     const startIdx = Math.max(0, bite.startLine - 1);
@@ -281,6 +380,8 @@ export function App() {
     ];
     const newContent = newLines.join('\n');
 
+    if (gatePatch(newContent, `bite patch ${bite.id} for ${activeFile.path}`) === null) return;
+
     handleCodeChange(newContent);
     setFiles((prev) =>
       prev.map((f) =>
@@ -290,12 +391,14 @@ export function App() {
 
     setTerminalLogs((prev) => [
       ...prev,
-      `$ [BITE APPLIED] Synced ${bite.id} patch to ${activeFile.path}.`,
+      `$ [BITE APPLIED] Synced ${bite.id} patch to ${activeFile.path} (LAYER 1 cleared).`,
     ]);
   };
 
   const handleApplyAllBites = (bites: CodeBite[]) => {
     const combined = bites.map((b) => b.healedSnippet).join('\n');
+    if (gatePatch(combined, `full AST-bite patch set for ${activeFile.path}`) === null) return;
+
     handleCodeChange(combined);
     setFiles((prev) =>
       prev.map((f) =>
@@ -310,10 +413,46 @@ export function App() {
     ]);
   };
 
+  // --------------------------------------------------------------------------
+  // LAYER 3 dispatch helper — the ONLY way anything executes in this app.
+  // terminalAuthorizeRun forces LAYER 1 inspection + path jail + single-use
+  // permit; the sandbox engine consumes the permit and re-verifies the hash.
+  // --------------------------------------------------------------------------
+  const gatedSandboxRun = (
+    path: string,
+    content: string,
+    payload?: Record<string, unknown>,
+  ): { result: TerminalExecutionResult; permitId?: string } => {
+    const auth = terminalAuthorizeRun(path, content, 'TERMINAL_EXECUTION');
+    if (!auth.granted || !auth.permit) {
+      const refusal: TerminalExecutionResult = {
+        exitCode: 126,
+        stdout: [],
+        stderr: [
+          `[TERMINAL GPT · LAYER 3] DENIED ${path}: ${auth.denialReason ?? 'no permit issued'}`,
+        ],
+        executionTimeMs: 0,
+        crashed: true,
+        errorStackTrace: `SecurityError: ${auth.denialReason ?? 'Execution denied at the LAYER 3 gate'}`,
+        securityAudit: auth.inspection,
+      };
+      logSovereign(refusal.stderr);
+      return { result: refusal };
+    }
+    const result = executeScriptInSandbox(path, content, payload, {
+      permitId: auth.permit.id,
+    });
+    if (!result.crashed) {
+      logSovereign([
+        `[TERMINAL GPT · LAYER 3] Permit ${auth.permit.id} consumed · ${path} executed in locked scope · exit 0.`,
+      ]);
+    }
+    return { result, permitId: auth.permit.id };
+  };
+
   const handleRunCurrentScript = () => {
-    const execResult = executeScriptInSandbox(activeFile.path, activeFile.content);
+    const { result: execResult } = gatedSandboxRun(activeFile.path, activeFile.content);
     setLastExecutionResult(execResult);
-    setSecurityAudits((prev) => [execResult.securityAudit, ...prev]);
 
     setFiles((prev) =>
       prev.map((f) =>
@@ -332,46 +471,137 @@ export function App() {
     setTimeout(captureState, 250);
   };
 
-  const handleRunCustomCommand = (cmd: string) => {
-    const audit = inspectSecurityPayload(cmd, 'TERMINAL_EXECUTION', shieldConfig);
-    setSecurityAudits((prev) => [audit, ...prev]);
+  const findWorkspaceFile = (target: string): WorkspaceFile | undefined =>
+    files.find(
+      (f) => f.path === target || f.name === target || f.path.endsWith(target) || target.endsWith(f.path)
+    );
 
-    if (!audit.executionAllowed) {
+  const resolveVirtualPath = (target: string): string =>
+    `/workspace/sovereign-project/${target.replace(/^\/+/, '').replace(/^workspace\/sovereign-project\//, '')}`;
+
+  // --------------------------------------------------------------------------
+  // SHELL GPT (LAYER 2) → TERMINAL GPT (LAYER 3)
+  // No string from the terminal prompt is ever evaluated. It is tokenized into
+  // argv, only an allowlist of read-only verbs survives, and `node` is the one
+  // verb that continues into the permit-gated sandbox engine.
+  // --------------------------------------------------------------------------
+  const handleRunCustomCommand = (cmd: string) => {
+    const sanitized = shellSanitizeCommand(cmd);
+
+    const argv = sanitized.argv;
+    if (sanitized.verdict === 'BLOCKED' || !argv) {
       setTerminalLogs((prev) => [
         ...prev,
         `$ ${cmd}`,
-        `[DOUBLE-LAYER SHIELD FIREWALL] CRITICAL BLOCKED: ${audit.threats[0]?.mitigation}`,
+        `[SHELL GPT · LAYER 2] BLOCKED — ${sanitized.reason}`,
+        `[SHELL GPT · LAYER 2] Segments rejected: ${sanitized.segments.join(' | ') || '(none)'} · ledger #${sanitized.audit?.ledgerSeq ?? 'n/a'}`,
       ]);
       return;
     }
 
-    if (cmd.startsWith('node ')) {
-      const targetName = cmd.replace('node ', '').trim();
-      const matched =
-        files.find(
-          (f) =>
-            f.path === targetName ||
-            f.name === targetName ||
-            f.path.endsWith(targetName)
-        ) || activeFile;
-      const res = executeScriptInSandbox(matched.path, matched.content);
-      setLastExecutionResult(res);
+    const [verb, ...args] = argv;
+
+    if (verb === 'node') {
+      const target = args[0];
+      const matched = findWorkspaceFile(target);
+      if (!matched) {
+        logSovereign([
+          `[TERMINAL GPT · LAYER 3] No workspace file matches "${target}". Refusing to resolve paths outside the virtual filesystem.`,
+        ]);
+        return;
+      }
+      const { result } = gatedSandboxRun(matched.path, matched.content);
+      setLastExecutionResult(result);
+      setFiles((prev) =>
+        prev.map((f) =>
+          f.id === matched.id
+            ? { ...f, lastRunStatus: result.crashed ? 'CRASHED' : 'PASSED' }
+            : f
+        )
+      );
       setTerminalLogs((prev) => [
         ...prev,
-        `$ ${cmd}`,
-        ...res.stdout,
-        ...res.stderr,
+        `$ ${argv.join(' ')}`,
+        ...result.stdout,
+        ...result.stderr,
       ]);
-    } else {
-      setTerminalLogs((prev) => [
-        ...prev,
-        `$ ${cmd}`,
-        `[SANDBOX] Executed safely in isolated container.`,
-      ]);
+      setTimeout(captureState, 250);
+      return;
     }
+
+    // Read-only verbs answer from the virtual filesystem only — the host OS is
+    // never consulted, so there is nothing for an attacker to reach.
+    const virtualPaths = files.map((f) => resolveVirtualPath(f.path));
+    let output: string[];
+
+    switch (verb) {
+      case 'shield':
+        output = [
+          `[KALI GPT · LAYER 1] Policy engine armed · ${sanitized.audit?.ledgerSeq ?? 0} ledger entries`,
+          `[SHELL GPT · LAYER 2] Command sanitizer active · allowlist: ${[...ALLOWED_SHELL_VERBS].join(', ')}`,
+          `[TERMINAL GPT · LAYER 3] Permit-gated execution · no unpermitted call has ever run`,
+        ];
+        break;
+      case 'ls':
+        output = args.length > 0 ? [`ls: ${args[0]}: no such file or directory (virtual filesystem)`] : virtualPaths;
+        break;
+      case 'cat': {
+        const matched = args[0] ? findWorkspaceFile(args[0]) : undefined;
+        output = matched ? [matched.content] : [`cat: ${args[0] ?? '<missing>'}: not a virtual filesystem path`];
+        break;
+      }
+      case 'pwd':
+        output = ['/workspace/sovereign-project'];
+        break;
+      case 'whoami':
+        output = ['sovereign-operator (uid 65534 · nobody)'];
+        break;
+      case 'head':
+      case 'tail':
+      case 'wc':
+      case 'grep': {
+        const fileArg = args.find((a) => !a.startsWith('-'));
+        const matched = fileArg ? findWorkspaceFile(fileArg) : undefined;
+        if (!matched) {
+          output = [`${verb}: no readable virtual file (usage: ${verb} src/<file>.js)`];
+          break;
+        }
+        const lines = matched.content.split('\n');
+        output =
+          verb === 'head' ? lines.slice(0, 10)
+          : verb === 'tail' ? lines.slice(-10)
+          : verb === 'wc' ? [`${lines.length} ${matched.content.length} ${matched.content.split(/\s+/).filter(Boolean).length}`]
+          : (args.filter((a) => !a.startsWith('-')).length > 1
+              ? lines.filter((l) => l.includes(args[args.length - 1]))
+              : lines
+            ).slice(0, 40);
+        break;
+      }
+      case 'echo':
+        output = [args.join(' ')];
+        break;
+      case 'clear':
+        setTerminalLogs(['$ clear', '[SANDBOX] Terminal view cleared. Audit ledger is append-only and was NOT erased.']);
+        return;
+      case 'help':
+        output = [
+          'Sovereign terminal — LAYER 2 allowlist: node, ls, cat, head, tail, wc, grep, pwd, whoami, echo, shield, clear, help',
+          'Every command is sanitized; `node <file>` requires a LAYER 3 permit and runs in a locked scope.',
+          'The host operating system is unreachable from this surface.',
+        ];
+        break;
+      default:
+        output = [`[SHELL GPT · LAYER 2] "${verb}" is not a serviceable command inside the jail.`];
+    }
+
+    setTerminalLogs((prev) => [...prev, `$ ${argv.join(' ')}`, ...output].slice(-600));
   };
 
-  // Option 2 Autonomous Error-Fixing Loop with Codestral
+  // Option 2 Autonomous Error-Fixing Loop with Codestral.
+  // Supervised end-to-end by the security layers: every execution consumes its
+  // own LAYER 3 permit, and a remotely-synthesized patch must clear LAYER 1
+  // before it can replace the file — a compromised/evil gateway can therefore
+  // never write weaponized "fixes" into the workspace.
   const handleTriggerAutoHealLoop = () => {
     if (isHealingLoopRunning) return;
     setIsHealingLoopRunning(true);
@@ -383,19 +613,18 @@ export function App() {
       step: 1,
       phase: 'READ_CONTEXT',
       timestamp: new Date().toLocaleTimeString(),
-      message: `[1/5] Ingested ${filePath} into Mistral Codestral context.`,
+      message: `[1/5] Ingested ${filePath} into Mistral Codestral context (LAYER 1 pre-cleared for analysis).`,
     };
 
     setAutoHealTraces([step1]);
     setTerminalLogs((prev) => [
       ...prev,
-      `$ [AUTO-HEAL LOOP] Target: ${filePath} via Codestral 22B`,
+      `$ [AUTO-HEAL LOOP] Target: ${filePath} via Codestral 22B · LAYER 3 supervising every run`,
     ]);
 
     setTimeout(() => {
-      const execResult = executeScriptInSandbox(filePath, initialCode);
+      const { result: execResult } = gatedSandboxRun(filePath, initialCode);
       setLastExecutionResult(execResult);
-      setSecurityAudits((prev) => [execResult.securityAudit, ...prev]);
       setTerminalLogs((prev) => [...prev, ...execResult.stdout, ...execResult.stderr]);
 
       const step2: AutonomousLoopTrace = {
@@ -425,7 +654,9 @@ export function App() {
         setTimeout(async () => {
           let healedContent = bites.map((b) => b.healedSnippet).join('\n');
 
-          // If online with API key, perform live remote synthesis
+          // If online with API key, perform live remote synthesis. The reply is
+          // UNTRUSTED: LAYER 1 must clear it, otherwise the deterministic local
+          // AST patch stands (fail-closed against a compromised or hostile gateway).
           if (remoteConfig.mode === 'online' && remoteConfig.apiKey.trim()) {
             try {
               const remoteRes = await generateRemoteMistralChat({
@@ -443,10 +674,17 @@ export function App() {
                 ],
               });
               if (remoteRes.ok && remoteRes.text.length > 50 && !remoteRes.text.includes('```')) {
-                healedContent = remoteRes.text;
+                const gated = gatePatch(remoteRes.text, `remote Codestral patch for ${filePath}`);
+                if (gated !== null) {
+                  healedContent = gated;
+                } else {
+                  logSovereign([
+                    '[KALI GPT · LAYER 1] Falling back to the locally verified AST-bite patch (fail-closed).',
+                  ]);
+                }
               }
             } catch {
-              // Fallback
+              // Fallback to local deterministic healing
             }
           }
 
@@ -454,16 +692,15 @@ export function App() {
             step: 4,
             phase: 'SOVEREIGN_HEAL_PATCH',
             timestamp: new Date().toLocaleTimeString(),
-            message: `[4/5] Codestral synthesized null/NaN guard and applied AST patch to ${filePath}.`,
+            message: `[4/5] Codestral synthesized null/NaN guard; patch cleared LAYER 1 output gate before touching ${filePath}.`,
             codeDiffSummary: `+ if (!payload || typeof payload.amount !== 'number') throw new TypeError(...)\n+ const total = Number((payload.amount * (payload.rate ?? 1.0)).toFixed(4));`,
           };
           setAutoHealTraces((prev) => [...prev, step4]);
           handleCodeChange(healedContent);
 
           setTimeout(() => {
-            const verifyResult = executeScriptInSandbox(filePath, healedContent);
+            const { result: verifyResult } = gatedSandboxRun(filePath, healedContent);
             setLastExecutionResult(verifyResult);
-            setSecurityAudits((prev) => [verifyResult.securityAudit, ...prev]);
             setTerminalLogs((prev) => [...prev, ...verifyResult.stdout, ...verifyResult.stderr]);
 
             const step5: AutonomousLoopTrace = {
@@ -539,21 +776,29 @@ export function App() {
       setActiveRecentId(newRecent.id);
     }
 
-    // Security scan on user prompt
-    const promptAudit = inspectSecurityPayload(userText, 'USER_PROMPT', shieldConfig);
-    setSecurityAudits((prev) => [promptAudit, ...prev]);
+    // LAYER 1 (KALI GPT) — every prompt is inspected, logged to the hash-chained
+    // ledger, and denied before any model, agent, or interpreter sees it. This
+    // includes prompt-injection / guardrail-override attempts aimed at the
+    // security layers themselves.
+    const promptAudit = kaliInspect(userText, 'USER_PROMPT');
 
-    if (!promptAudit.executionAllowed) {
+    if (promptAudit.denied) {
       setMessages((prev) => [
         ...prev,
         {
           id: `msg-shield-${Date.now()}`,
           sender: 'SHIELD_SYSTEM',
           timestamp: new Date().toLocaleTimeString(),
-          text: `BLOCKED BY INSIDE BOUNDARY FIREWALL: Malicious command or destructive directory wipe detected in prompt.`,
+          text: `⛔ DENIED BY KALI GPT (LAYER 1) · ${promptAudit.threats[0]?.category ?? 'POLICY'}. The payload was isolated before any model or interpreter received it and committed to the tamper-evident audit ledger (#${promptAudit.ledgerSeq}).`,
           securityBlocked: true,
-          blockedReason: promptAudit.threats[0]?.mitigation,
+          blockedReason:
+            promptAudit.threats[0]?.mitigation ??
+            'Critical rule match intercepted at the Inside Boundary firewall.',
         },
+      ]);
+      logSovereign([
+        `$ ${userText.slice(0, 120)}`,
+        `[KALI GPT · LAYER 1] DENIED chat ingress · ${promptAudit.threats.map((t) => t.ruleId).join(', ')} · ledger #${promptAudit.ledgerSeq}`,
       ]);
       return;
     }
@@ -576,10 +821,17 @@ export function App() {
         modelTitle,
       });
 
+      // Echo the layer's own activity to the background terminal so enforcement
+      // is observable: the console is a read-only mirror, never a control surface.
+      setTerminalLogs((prev) =>
+        [...prev, ...generateAgentTerminalLogs(activeAgent, userText)].slice(-600)
+      );
+
       if (
         activeAgent === 'terminal-gpt' &&
         response.type === 'terminal' &&
-        /^node\s+/.test(response.command)
+        /^node\s+/.test(response.command) &&
+        response.exitCode === 0
       ) {
         const runCommand = response.command;
         const targetName = runCommand.replace(/^node\s+/, '').trim();
@@ -590,9 +842,9 @@ export function App() {
               f.name === targetName ||
               f.path.endsWith(targetName)
           ) || activeFile;
-        const execResult = executeScriptInSandbox(matched.path, matched.content);
+        // LAYER 3: staged execution still takes the permit path like every other run.
+        const { result: execResult, permitId } = gatedSandboxRun(matched.path, matched.content);
         setLastExecutionResult(execResult);
-        setSecurityAudits((prev) => [execResult.securityAudit, ...prev]);
         setTerminalLogs((prev) => [
           ...prev,
           `$ ${runCommand}`,
@@ -610,7 +862,11 @@ export function App() {
           ...response,
           output: [...execResult.stdout, ...execResult.stderr],
           exitCode: execResult.exitCode,
-          verdict: execResult.crashed ? 'CRASHED' : 'PASSED',
+          verdict: permitId
+            ? execResult.crashed
+              ? 'CRASHED (permit ' + permitId + ' consumed)'
+              : 'PASSED (permit ' + permitId + ' consumed)'
+            : 'BLOCKED AT GATE (no permit issued)',
         };
         response = enriched;
       }
@@ -624,6 +880,21 @@ export function App() {
 
       let aiResponseText = '';
       let tokenMetrics: ChatMessage['tokenMetrics'] = undefined;
+
+      // LAYER 1 OUTPUT GATE — every string produced by a model (remote gateway OR
+      // offline engine) is treated as untrusted input and must clear the same
+      // rule base before it can be rendered, written, or memorized.
+      const gateOutput = (raw: string): string => {
+        if (!raw) return raw;
+        const gate = kaliGateModelOutput(raw);
+        if (!gate.allowed) {
+          logSovereign([
+            `[KALI GPT · LAYER 1] Model output quarantined · ${gate.audit.threats[0]?.ruleId ?? 'critical finding'} · ledger #${gate.audit.ledgerSeq}`,
+          ]);
+          return gate.text;
+        }
+        return raw;
+      };
 
       // Online Remote API call if configured
       if (!isStructuredAgentCommand && remoteConfig.mode === 'online' && remoteConfig.apiKey.trim()) {
@@ -647,7 +918,7 @@ export function App() {
         });
 
         if (remoteResult.ok) {
-          aiResponseText = remoteResult.text;
+          aiResponseText = gateOutput(remoteResult.text);
           tokenMetrics = {
             prompt: remoteResult.usage?.promptTokens ?? 0,
             completion: remoteResult.usage?.completionTokens ?? 0,
@@ -663,7 +934,7 @@ export function App() {
             filePath: activeFile.path,
             fileContent: activeFile.content,
           });
-          aiResponseText = offlineRes.text;
+          aiResponseText = gateOutput(offlineRes.text);
           tokenMetrics = {
             prompt: offlineRes.tokens.prompt,
             completion: offlineRes.tokens.completion,
@@ -680,7 +951,7 @@ export function App() {
           filePath: activeFile.path,
           fileContent: activeFile.content,
         });
-        aiResponseText = offlineRes.text;
+        aiResponseText = gateOutput(offlineRes.text);
         tokenMetrics = {
           prompt: offlineRes.tokens.prompt,
           completion: offlineRes.tokens.completion,
@@ -688,26 +959,41 @@ export function App() {
           latencyMs: offlineRes.latencyMs,
         };
 
-        // If a new file was synthesized from scratch (like Cursor), automatically add to workspace
+        // If a new file was synthesized from scratch (like Cursor), it passes the
+        // LAYER 1 patch gate and LAYER 2 filename policy before it may enter the
+        // workspace — a poisoned generation can never plant a file.
         if (offlineRes.generatedFile) {
           const gen = offlineRes.generatedFile;
+          const nameCheck = validateWorkspaceFilename(gen.path);
+          if (!nameCheck.ok) {
+            logSovereign([
+              `[SHELL GPT · LAYER 2] REFUSED generated file "${gen.path}": ${nameCheck.reason}`,
+            ]);
+          } else if (gatePatch(gen.content, `generated file ${gen.path}`) === null) {
+            // quarantine logged inside gatePatch
+          } else {
+          const safePath = nameCheck.safeName;
           setFiles((prev) => {
-            if (prev.some((f) => f.path === gen.path)) {
-              return prev.map((f) => f.path === gen.path ? { ...f, content: gen.content, isModified: true } : f);
+            if (prev.some((f) => f.path === safePath)) {
+              return prev.map((f) => f.path === safePath ? { ...f, content: gen.content, isModified: true } : f);
             }
             return [
               ...prev,
               {
                 id: `file-${Date.now().toString(36)}`,
                 name: gen.name,
-                path: gen.path,
-                language: gen.path.endsWith('.ts') ? 'typescript' : 'javascript',
+                path: safePath,
+                language: safePath.endsWith('.ts') ? 'typescript' : 'javascript',
                 content: gen.content,
                 hasKnownBug: false,
                 lastRunStatus: 'PASSED',
               },
             ];
           });
+          logSovereign([
+            `[KALI GPT · LAYER 1] Generated file ${safePath} cleared the output gate and entered the sandbox workspace.`,
+          ]);
+          }
         }
       }
 
@@ -862,16 +1148,40 @@ export function App() {
               />
             )}
 
-            {/* VIEW 4: AGENTS DIRECTORY */}
+            {/* VIEW 4: BACKEND SECURITY LAYERS */}
             {currentView === 'agents' && (
-              <div className="w-full h-full p-6 overflow-y-auto max-w-4xl mx-auto space-y-4">
-                <div className="text-center py-4 space-y-1">
+              <div className="w-full h-full p-6 overflow-y-auto max-w-5xl mx-auto space-y-4">
+                <div className="text-center py-4 space-y-2">
                   <h1 className="text-2xl font-heading font-semibold text-[#1C1917]">
-                    Sovereign Mistral Agents
+                    Backend Security Layers
                   </h1>
-                  <p className="text-xs text-[#78716C]">
-                    Specialized AI copilots running inside the Double-Layer Security Shield.
+                  <p className="mx-auto max-w-2xl text-xs text-[#78716C]">
+                    KALI GPT, SHELL GPT and TERMINAL GPT are <strong>not</strong> chat agents or standard
+                    models. They are the enforcement layers of this workstation: threat isolation,
+                    command sanitization and permit-gated execution. Select one to open its live
+                    verdict console.
                   </p>
+
+                  <div
+                    className={`mx-auto inline-flex items-center space-x-2 px-3 py-1.5 rounded-full text-[11px] font-semibold ${
+                      shieldIntegrity.intact
+                        ? 'bg-[#E8F8F5] text-[#0F766E] border border-[#A3E4D7]'
+                        : 'bg-[#FDEDEC] text-[#922B21] border border-[#F5B7B1]'
+                    }`}
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    <span>
+                      {shieldIntegrity.intact
+                        ? `Audit ledger verified · ${shieldIntegrity.entries} entries · head ${shieldIntegrity.headHash}`
+                        : `LEDGER FAULT at #${shieldIntegrity.brokenAtSeq ?? '?'} — restart required`}
+                    </span>
+                  </div>
+
+                  <div className="mx-auto flex items-center justify-center gap-4 pt-1 text-[11px] text-[#8C827A]">
+                    <span><strong className="text-[#B91C1C]">{shieldIntegrity.blockedCount}</strong> hard denials</span>
+                    <span><strong className="text-[#B45309]">{shieldIntegrity.containedCount}</strong> contained</span>
+                    <span><strong className="text-[#0F766E]">{terminalPermitIssued}</strong> permits issued</span>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -900,24 +1210,75 @@ export function App() {
                             >
                               <Icon className="w-4 h-4" />
                             </div>
-                            <span className="text-[10px] font-semibold uppercase tracking-wider text-[#A8A29E]">
-                              {agent.role}
-                            </span>
+                            <div className="text-right">
+                              <div
+                                className="text-[10px] font-mono font-bold uppercase tracking-wider"
+                                style={{ color: agent.accent }}
+                              >
+                                LAYER {agent.layer} · {agent.codename}
+                              </div>
+                              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#A8A29E]">
+                                {agent.defenseRole.split('_').join(' ')}
+                              </div>
+                            </div>
                           </div>
 
                           <h2 className="text-sm font-semibold text-[#1C1917]">{agent.name}</h2>
                           <p className="text-xs text-[#78716C] mt-1">{agent.tagline}</p>
+
+                          <div className="mt-3 space-y-1">
+                            <div className="text-[10px] font-semibold uppercase tracking-wider text-[#A8A29E]">
+                              Enforcement points
+                            </div>
+                            {agent.enforcementPoints.map((point) => (
+                              <div key={point} className="flex items-start space-x-1.5 text-[11px] text-[#57534E]">
+                                <span className="text-[#0D9488] mt-px">✓</span>
+                                <span>{point}</span>
+                              </div>
+                            ))}
+                          </div>
                         </div>
 
                         <button
                           type="button"
                           className="w-full py-1.5 rounded-xl bg-[#FAF6F0] hover:bg-[#F2ECE3] border border-[#E8DFD5] text-xs font-semibold text-[#1C1917] transition-colors"
                         >
-                          Chat with {agent.name}
+                          Open {agent.name} console
                         </button>
                       </div>
                     );
                   })}
+                </div>
+
+                <div className="pinterest-card p-4">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-[#A8A29E] mb-2">
+                    Request chain — enforced in this order, no bypass path
+                  </div>
+                  <div className="flex flex-col md:flex-row md:items-center gap-2 text-[11px]">
+                    {['Chat prompt / editor write', 'LAYER 1 · KALI GPT', 'LAYER 2 · SHELL GPT', 'LAYER 3 · TERMINAL GPT permit', 'Locked sandbox realm'].map(
+                      (stage, i) => (
+                        <Fragment key={stage}>
+                          {i > 0 && <ChevronRight className="w-3.5 h-3.5 text-[#C4B5A5] shrink-0 hidden md:block" />}
+                          <span
+                            className={`px-2.5 py-1 rounded-lg border ${
+                              i === 0 || i === 4
+                                ? 'bg-[#FAF6F0] border-[#E8DFD5] text-[#57534E]'
+                                : 'bg-[#FFFFFF] border-[#E0D7CC] text-[#1C1917] font-semibold'
+                            }`}
+                          >
+                            {stage}
+                          </span>
+                        </Fragment>
+                      )
+                    )}
+                  </div>
+                  <p className="mt-3 text-[11px] leading-relaxed text-[#78716C]">
+                    Model replies, AST bite patches and synthesized files are re-inspected by LAYER 1 on
+                    the way in, so a compromised or malicious gateway can never deliver a payload into the
+                    editor or the terminal. Destructive primitives, credential reads, exfiltration hosts,
+                    fork bombs, path traversal and prompt-injection attempts against the shield itself are
+                    denied before any interpreter sees them and recorded on the hash-chained ledger.
+                  </p>
                 </div>
               </div>
             )}
@@ -962,7 +1323,21 @@ export function App() {
                         <button
                           onClick={() => {
                             setActiveFileId(file.id);
-                            handleRunCurrentScript();
+                            // Run THIS file (not the previously active one) through the gate.
+                            const { result } = gatedSandboxRun(file.path, file.content);
+                            setLastExecutionResult(result);
+                            setFiles((prev) =>
+                              prev.map((f) =>
+                                f.id === file.id
+                                  ? { ...f, lastRunStatus: result.crashed ? 'CRASHED' : 'PASSED' }
+                                  : f
+                              )
+                            );
+                            logSovereign([
+                              `$ node ${file.path}`,
+                              ...result.stdout,
+                              ...result.stderr,
+                            ]);
                           }}
                           className="px-3 py-1.5 rounded-xl bg-[#1C1917] hover:bg-[#2E2A27] text-[#FFFFFF] text-xs font-semibold"
                         >

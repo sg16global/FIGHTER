@@ -22,7 +22,8 @@ import {
   saveRemoteApiConfig,
   testRemoteMistralConnection,
 } from '../engine/mistralClient';
-import { loadMemoryBank, saveMemoryBank } from '../memory/ltmb';
+import { importMemoryBank, loadMemoryBank, sanitizeMemoryBank } from '../memory/ltmb';
+import { validateRemoteEndpoint } from '../security/securityCore';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -50,6 +51,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<RemoteApiStatus | null>(null);
   const [saveToast, setSaveToast] = useState(false);
+  const [endpointError, setEndpointError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -65,9 +67,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
+  // Endpoint policy is enforced HERE in the UI and again in the kernel before
+  // persistence — double validation, because a modified component must not be
+  // able to skip straight to saveRemoteApiConfig with a hostile URL.
   const handleSave = () => {
-    saveRemoteApiConfig(localConfig);
-    onUpdateConfig(localConfig);
+    const onlineIntent = localConfig.mode === 'online' && localConfig.apiKey.trim().length > 0;
+    if (onlineIntent) {
+      const verdict = validateRemoteEndpoint(localConfig.endpointUrl);
+      if (!verdict.ok) {
+        setEndpointError(verdict.reason ?? 'Endpoint rejected by the sovereign network policy.');
+        // Fail closed: hand the kernel an airgapped config it can still refine.
+        onUpdateConfig({ ...localConfig, mode: 'offline' });
+        return;
+      }
+      setEndpointError(null);
+      const pinned: RemoteApiConfig = { ...localConfig, endpointUrl: verdict.url };
+      saveRemoteApiConfig(pinned);
+      onUpdateConfig(pinned);
+    } else {
+      saveRemoteApiConfig(localConfig);
+      onUpdateConfig(localConfig);
+    }
     setSaveToast(true);
     setTimeout(() => {
       setSaveToast(false);
@@ -88,20 +108,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  // Imported memory is attacker-controllable input. It is schema-validated and
+  // clamped before persistence, and only the restored snapshot fields are read
+  // back by the workspace — never re-injected as code or paths.
   const handleImportLTMB = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > 8 * 1024 * 1024) {
+      alert('Memory bank rejected: file exceeds the 8 MB import limit.');
+      e.target.value = '';
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
         const parsed = JSON.parse(event.target?.result as string);
-        if (parsed && typeof parsed === 'object') {
-          saveMemoryBank(parsed);
-          alert('Long-Term Memory Bank snapshot imported successfully.');
+        const bank = sanitizeMemoryBank(parsed);
+        if (!bank) {
+          alert('Memory bank rejected: not a valid LTMB structure. Nothing was imported.');
+        } else {
+          importMemoryBank(bank);
+          alert(`Long-Term Memory Bank imported: ${bank.snapshots.length} validated snapshot(s).`);
         }
       } catch {
-        alert('Invalid JSON memory file.');
+        alert('Invalid JSON memory file. Nothing was imported.');
       }
+      e.target.value = '';
     };
     reader.readAsText(file);
   };
@@ -208,12 +240,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <input
                   type="text"
                   value={localConfig.endpointUrl}
-                  onChange={(e) =>
-                    setLocalConfig({ ...localConfig, endpointUrl: e.target.value })
-                  }
+                  onChange={(e) => {
+                    setEndpointError(null);
+                    setLocalConfig({ ...localConfig, endpointUrl: e.target.value });
+                  }}
                   placeholder="https://api.mistral.ai/v1"
-                  className="w-full bg-[#FFFFFF] border border-[#E0D7CC] rounded-xl px-3 py-2 text-xs font-mono text-[#1C1917] focus:outline-none focus:border-[#E07A5F]"
+                  className={`w-full bg-[#FFFFFF] border rounded-xl px-3 py-2 text-xs font-mono text-[#1C1917] focus:outline-none ${
+                    endpointError
+                      ? 'border-[#F87171] focus:border-[#DC2626]'
+                      : 'border-[#E0D7CC] focus:border-[#E07A5F]'
+                  }`}
                 />
+                {endpointError ? (
+                  <p className="mt-1.5 text-[11px] leading-snug text-[#B91C1C] flex items-start space-x-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
+                    <span>
+                      <strong>Blocked by security layers (LAYER 1 endpoint policy):</strong>{' '}
+                      {endpointError} Studio held in Airgapped Offline mode.
+                    </span>
+                  </p>
+                ) : (
+                  <p className="mt-1.5 text-[10px] text-[#A8A29E]">
+                    Pinned by policy: https to a sanctioned Mistral sovereign gateway, or an
+                    http://localhost vLLM endpoint. Telemetry hosts are permanently denied.
+                  </p>
+                )}
               </div>
 
               <div>
@@ -242,6 +293,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <Key className="w-4 h-4 text-[#A8A29E] absolute right-3 pointer-events-none" />
                 </div>
               </div>
+
+              <p className="text-[10px] font-mono text-[#8C827A]">
+                Kernel view: {remoteStatus.status.toUpperCase()} · {remoteStatus.message}
+              </p>
 
               {/* Diagnostic Network Ping Button */}
               <div className="pt-2 flex items-center space-x-3">

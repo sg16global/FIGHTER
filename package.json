@@ -2,7 +2,7 @@
   "name": "aegis-sovereign-ai-dev-studio",
   "private": true,
   "version": "1.0.0",
-  "description": "Aegis AI Dev Studio — Sovereign Mistral Autonomous Dev Workstation",
+  "description": "Aegis AI Dev Studio \u2014 Sovereign Mistral Autonomous Dev Workstation",
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
@@ -11,7 +11,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "electron:dev": "electron .",
-    "electron:build": "electron-builder"
+    "electron:build": "electron-builder",
+    "security:selftest": "node src/security/selftest/run.mjs"
   },
   "dependencies": {
     "clsx": "2.1.1",
@@ -46,7 +47,9 @@
     ],
     "asar": true,
     "win": {
-      "target": ["portable"]
+      "target": [
+        "portable"
+      ]
     }
   }
 }

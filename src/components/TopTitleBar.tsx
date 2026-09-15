@@ -12,7 +12,7 @@ import {
   Globe,
   Radio,
 } from 'lucide-react';
-import { MistralModelId, MISTRAL_MODELS, RemoteApiStatus } from '../engine/mistralClient';
+import { MistralModelId, RemoteApiStatus } from '../engine/mistralClient';
 
 interface TopTitleBarProps {
   activeModel: MistralModelId;
@@ -45,7 +45,6 @@ export const TopTitleBar: React.FC<TopTitleBarProps> = ({
   shieldBlockedCount,
   activeFilePath,
 }) => {
-  const currentSpec = MISTRAL_MODELS[activeModel];
   const isOnline = remoteStatus.mode === 'online' && remoteStatus.status === 'online';
 
   return (

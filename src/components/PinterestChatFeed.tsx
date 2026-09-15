@@ -3,8 +3,6 @@ import {
   ArrowUp,
   Paperclip,
   Globe,
-  Mic,
-  Plus,
   ChevronDown,
   Copy,
   Check,
@@ -13,13 +11,89 @@ import {
   Cpu,
   ShieldAlert,
   ArrowRight,
-  Code2,
   Bug,
 } from 'lucide-react';
 import { ChatMessage } from './MainChatPanel';
 import { MistralModelId, MISTRAL_MODELS } from '../engine/mistralClient';
 import { CodeBite } from '../engine/sovereignBiteEngine';
 import { AGENTS, AgentId } from '../agents/agents';
+
+/** Compact renderer for backend-layer decisions surfaced in the chat stream. */
+const LayerVerdictStrip: React.FC<{ msg: ChatMessage }> = ({ msg }) => {
+  const r = msg.agentResponse;
+  if (!r) return null;
+  if (r.type === 'kali') {
+    const counts = r.findings.reduce<Record<string, number>>((acc, f) => {
+      acc[f.severity] = (acc[f.severity] ?? 0) + 1;
+      return acc;
+    }, {});
+    return (
+      <div className="mt-3 pt-3 border-t border-[#EFE7DE] space-y-1.5">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-[#B91C1C] flex items-center justify-between">
+          <span>KALI GPT · LAYER 1 verdict</span>
+          {r.telemetry && (
+            <span className="font-mono text-[#8C827A] normal-case">
+              ledger #{r.telemetry.ledgerEntries} · head {r.telemetry.headHash}
+            </span>
+          )}
+        </div>
+        <p className="text-[11px] text-[#57534E]">{r.summary}</p>
+        <div className="flex flex-wrap gap-1.5">
+          {Object.entries(counts).map(([sev, n]) => (
+            <span
+              key={sev}
+              className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
+                sev === 'CRITICAL'
+                  ? 'bg-[#FDEDEC] text-[#922B21]'
+                  : sev === 'HIGH'
+                  ? 'bg-[#FEF9E7] text-[#7D6608]'
+                  : 'bg-[#F4F6F6] text-[#57534E]'
+              }`}
+            >
+              {n} {sev}
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  if (r.type === 'shell') {
+    const blocked = r.sanitizeState === 'BLOCKED';
+    return (
+      <div className={`mt-3 pt-3 border-t border-[#EFE7DE] space-y-1 ${blocked ? 'opacity-90' : ''}`}>
+        <div className={`text-[10px] font-semibold uppercase tracking-wider ${blocked ? 'text-[#B91C1C]' : 'text-[#B45309]'}`}>
+          SHELL GPT · LAYER 2 — {r.sanitizeState ?? 'TRANSLATED'}
+        </div>
+        <pre className="p-2 rounded-xl bg-[#FAF6F0] border border-[#EFE7DE] text-[10px] font-mono whitespace-pre-wrap text-[#44403C]">
+          {r.command}
+        </pre>
+        <p className="text-[11px] text-[#78716C]">{r.securityNote}</p>
+      </div>
+    );
+  }
+  const crashed = r.exitCode !== 0;
+  return (
+    <div className="mt-3 pt-3 border-t border-[#EFE7DE] space-y-1">
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-[#0F766E] flex items-center justify-between">
+        <span>TERMINAL GPT · LAYER 3 execution</span>
+        <span
+          className={`px-1.5 py-0.5 rounded-full font-mono ${
+            crashed ? 'bg-[#FDEDEC] text-[#922B21]' : 'bg-[#E8F8F5] text-[#0F766E]'
+          }`}
+        >
+          EXIT {r.exitCode}
+        </span>
+      </div>
+      <pre className="p-2 rounded-xl bg-[#1C1917] text-[10px] font-mono whitespace-pre-wrap text-[#F5EFE8] overflow-x-auto">
+        <span className="text-[#8ADFFC]">$ {r.command}</span>
+        {'\n'}
+        {r.output.slice(0, 12).join('\n')}
+        {r.output.length > 12 ? `\n… (${r.output.length - 12} more lines in terminal)` : ''}
+      </pre>
+      <p className="text-[10px] font-mono text-[#A8A29E]">Verdict: {r.verdict}</p>
+    </div>
+  );
+};
 
 interface PinterestChatFeedProps {
   messages: ChatMessage[];
@@ -107,6 +181,16 @@ export const PinterestChatFeed: React.FC<PinterestChatFeedProps> = ({
                     <ShieldAlert className="w-3.5 h-3.5" />
                     <span>Security Shield Firewall</span>
                   </span>
+                ) : msg.agentId ? (
+                  <span
+                    className="flex items-center space-x-1 font-semibold"
+                    style={{ color: AGENTS[msg.agentId].accent }}
+                  >
+                    <Cpu className="w-3.5 h-3.5" />
+                    <span>
+                      {AGENTS[msg.agentId].name} · LAYER {AGENTS[msg.agentId].layer}
+                    </span>
+                  </span>
                 ) : (
                   <span className="flex items-center space-x-1 font-semibold text-[#1C1917]">
                     <Sparkles className="w-3.5 h-3.5 text-[#E07A5F]" />
@@ -134,6 +218,33 @@ export const PinterestChatFeed: React.FC<PinterestChatFeedProps> = ({
                 )}
 
                 <div className="whitespace-pre-wrap font-sans leading-relaxed">{msg.text}</div>
+
+                {/* Backend security layer verdict payload, if this message carries one */}
+                {!isUser && <LayerVerdictStrip msg={msg} />}
+
+                {/* Copy affordance for operator audit trails */}
+                {!isUser && (
+                  <div className="mt-2 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => handleCopy(msg.text, msg.id)}
+                      className="flex items-center space-x-1 px-2 py-0.5 rounded-full border border-[#EFE7DE] text-[10px] text-[#8C827A] hover:bg-[#FAF6F0] hover:text-[#1C1917] transition-colors"
+                      title="Copy response text"
+                    >
+                      {copiedId === msg.id ? (
+                        <>
+                          <Check className="w-3 h-3 text-[#0D9488]" />
+                          <span className="text-[#0D9488]">Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          <span>Copy</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
 
                 {/* Token stats badge */}
                 {msg.tokenMetrics && (
@@ -225,7 +336,7 @@ export const PinterestChatFeed: React.FC<PinterestChatFeedProps> = ({
             onChange={(e) => setInputText(e.target.value)}
             onKeyDown={handleKeyDown}
             rows={2}
-            placeholder={`Ask ${activeSpec.shortName}...`}
+            placeholder={`${agent.name} console (LAYER ${agent.layer}) — ${activeSpec.shortName} for analysis`}
             className="w-full bg-transparent resize-none border-none text-sm text-[#1C1917] placeholder-[#A8A29E] focus:outline-none select-text"
           />
 
